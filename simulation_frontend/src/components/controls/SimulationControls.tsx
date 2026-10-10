@@ -1,147 +1,83 @@
 "use client";
 
-import {
-  ArrowLeftRight,
-  Link,
-  Pause,
-  Play,
-  Radio,
-  RotateCcw,
-  Waves,
-} from "lucide-react";
-
+import { Map, Pause, Play, RotateCcw, Scan, TrainFront, Volume2, VolumeX } from "lucide-react";
+import { type MutableRefObject, useEffect, useRef, useState } from "react";
+import { formatDistance } from "@/lib/simulation";
+import type { SimulationSocket } from "@/lib/websocket";
 import { useSimulationStore } from "@/stores/simulationStore";
 
-export function SimulationControls() {
-  const isRunning = useSimulationStore((state) => state.isRunning);
-  const simulationSpeed = useSimulationStore((state) => state.simulationSpeed);
-  const trainDirection = useSimulationStore((state) => state.trainDirection);
-  const noiseLevel = useSimulationStore((state) => state.noiseLevel);
-  const sourceEnabled = useSimulationStore((state) => state.sourceEnabled);
-  const streamEnabled = useSimulationStore((state) => state.streamEnabled);
-  const socketStatus = useSimulationStore((state) => state.socketStatus);
-  const showWaves = useSimulationStore((state) => state.showWaves);
-  const showLinks = useSimulationStore((state) => state.showLinks);
-  const toggleRunning = useSimulationStore((state) => state.toggleRunning);
-  const setSimulationSpeed = useSimulationStore(
-    (state) => state.setSimulationSpeed,
-  );
-  const setTrainDirection = useSimulationStore((state) => state.setTrainDirection);
-  const setNoiseLevel = useSimulationStore((state) => state.setNoiseLevel);
-  const setSourceEnabled = useSimulationStore((state) => state.setSourceEnabled);
-  const setShowWaves = useSimulationStore((state) => state.setShowWaves);
-  const setShowLinks = useSimulationStore((state) => state.setShowLinks);
-  const setStreamEnabled = useSimulationStore((state) => state.setStreamEnabled);
-  const reset = useSimulationStore((state) => state.reset);
+export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<SimulationSocket | null> }) {
+  const current = useSimulationStore((state) => state.current?.value);
+  const railroad = useSimulationStore((state) => state.railroad);
+  const connection = useSimulationStore((state) => state.connection);
+  const cameraMode = useSimulationStore((state) => state.cameraMode);
+  const [volume, setVolume] = useState(.35);
+  const trainAudioRef = useRef<HTMLAudioElement | null>(null);
+  const running = current?.status === "running";
+  const progress = current && railroad ? (current.distance_along_route_m / railroad.route.length_m) * 100 : 0;
+
+  useEffect(() => {
+    const trainAudio = new Audio("/api/train-audio");
+    trainAudio.loop = true;
+    trainAudio.preload = "auto";
+    trainAudio.volume = .35;
+    trainAudioRef.current = trainAudio;
+    return () => {
+      trainAudio.pause();
+      trainAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const trainAudio = trainAudioRef.current;
+    if (!trainAudio) return;
+    trainAudio.volume = volume;
+    trainAudio.playbackRate = Math.min(2, Math.max(.5, current?.playback_speed ?? 1));
+    if (!running) trainAudio.pause();
+  }, [current?.playback_speed, running, volume]);
+
+  const toggleSimulation = () => {
+    socketRef.current?.send({ command: running ? "pause" : "play" });
+    const trainAudio = trainAudioRef.current;
+    if (!trainAudio) return;
+    if (running) trainAudio.pause();
+    else void trainAudio.play().catch(() => undefined);
+  };
+
+  const restartSimulation = () => {
+    socketRef.current?.send({ command: "restart" });
+    if (trainAudioRef.current) {
+      trainAudioRef.current.pause();
+      trainAudioRef.current.currentTime = 0;
+    }
+  };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-2">
-      <button
-        type="button"
-        onClick={toggleRunning}
-        className="inline-flex h-9 items-center gap-2 rounded-xl bg-white px-3 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
-      >
-        {isRunning ? <Pause size={14} /> : <Play size={14} />}
-        {isRunning ? "Pause" : "Run"}
-      </button>
-      <label className="flex h-9 items-center gap-2 rounded-xl border border-white/10 px-3 text-xs text-slate-300">
-        Speed
-        <select
-          value={simulationSpeed}
-          onChange={(event) => setSimulationSpeed(Number(event.target.value))}
-          className="bg-transparent font-semibold text-white outline-none"
-          aria-label="Simulation speed"
-        >
-          <option value={0.5} className="bg-slate-900">
-            0.5×
-          </option>
-          <option value={1} className="bg-slate-900">
-            1×
-          </option>
-          <option value={2} className="bg-slate-900">
-            2×
-          </option>
-        </select>
-      </label>
-      <button
-        type="button"
-        onClick={() => setTrainDirection(trainDirection === 1 ? -1 : 1)}
-        className="inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 px-3 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-        title="Reverse train direction"
-      >
-        <ArrowLeftRight size={14} />
-        {trainDirection === 1 ? "Eastbound" : "Westbound"}
-      </button>
-      <label className="flex h-9 items-center gap-2 rounded-xl border border-white/10 px-3 text-xs text-slate-300">
-        Noise
-        <select
-          value={noiseLevel}
-          onChange={(event) => setNoiseLevel(Number(event.target.value))}
-          className="bg-transparent font-semibold text-white outline-none"
-          aria-label="Microphone noise level"
-        >
-          <option value={0} className="bg-slate-900">Off</option>
-          <option value={0.06} className="bg-slate-900">Low</option>
-          <option value={0.14} className="bg-slate-900">High</option>
-        </select>
-      </label>
-      <button
-        type="button"
-        onClick={() => setSourceEnabled(!sourceEnabled)}
-        className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs transition ${
-          sourceEnabled
-            ? "border-rose-300/40 bg-rose-300/10 text-rose-100"
-            : "border-white/10 text-slate-400"
-        }`}
-      >
-        <Radio size={14} />
-        Source {sourceEnabled ? "on" : "off"}
-      </button>
-      <button
-        type="button"
-        onClick={() => setShowWaves(!showWaves)}
-        className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs transition ${
-          showWaves
-            ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100"
-            : "border-white/10 text-slate-400"
-        }`}
-      >
-        <Waves size={14} />
-        Waves
-      </button>
-      <button
-        type="button"
-        onClick={() => setShowLinks(!showLinks)}
-        className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs transition ${
-          showLinks
-            ? "border-violet-300/40 bg-violet-300/10 text-violet-100"
-            : "border-white/10 text-slate-400"
-        }`}
-      >
-        Links
-      </button>
-      <button
-        type="button"
-        onClick={() => setStreamEnabled(!streamEnabled)}
-        className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs transition ${
-          streamEnabled
-            ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-100"
-            : "border-white/10 text-slate-400"
-        }`}
-        title="Send synchronized microphone chunks to the simulation backend"
-      >
-        <Link size={14} />
-        Stream {streamEnabled ? socketStatus : "off"}
-      </button>
-      <button
-        type="button"
-        onClick={reset}
-        className="ml-auto inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 px-3 text-xs text-slate-400 transition hover:border-white/20 hover:text-white"
-        aria-label="Reset simulation"
-      >
-        <RotateCcw size={14} />
-        Reset
-      </button>
-    </div>
+    <section className="control-panel" aria-label="Train simulation controls">
+      <div className="status-row"><span className={`connection-dot ${connection}`} /><span>{connection === "connected" ? "Live simulation" : connection}</span><span className="status-pill">{current?.status ?? "loading"}</span></div>
+      <div className="train-readout">
+        <span className="icon-box"><TrainFront size={19} /></span>
+        <div><small>Train 001</small><strong>{current ? formatDistance(current.distance_along_route_m) : "—"}</strong></div>
+        <div className="coordinates"><small>WGS84</small><span>{current ? `${current.latitude.toFixed(5)}, ${current.longitude.toFixed(5)}` : "Waiting for state"}</span></div>
+      </div>
+      <div className="progress-track"><span style={{ width: `${Math.min(100, progress)}%` }} /></div>
+      <div className="button-row">
+        <button className="primary-button" onClick={toggleSimulation} disabled={!current || connection !== "connected" || current.status === "completed"}>
+          {running ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />} {running ? "Pause" : current?.status === "completed" ? "Completed" : "Play"}
+        </button>
+        <button className="icon-button" aria-label="Restart simulation" title="Restart" onClick={restartSimulation}><RotateCcw size={18} /></button>
+        <button className={`camera-button ${cameraMode === "top" ? "active" : ""}`} aria-label="Top view" onClick={() => useSimulationStore.getState().setCameraMode("top")}><Map size={17} /> Top view</button>
+        <button className={`camera-button ${cameraMode === "follow" ? "active" : ""}`} aria-label="Follow train from an isometric view" onClick={() => useSimulationStore.getState().setCameraMode("follow")}><Scan size={18} /> Follow</button>
+        <button className="text-button" onClick={() => useSimulationStore.getState().resetCamera()}>Overview</button>
+      </div>
+      <div className="control-settings">
+        <label className="volume-control">
+          {volume > 0 ? <Volume2 size={15} /> : <VolumeX size={15} />}
+          <span>Train audio</span>
+          <input aria-label="Train audio volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
+        </label>
+        <label className="speed-control"><span>Playback speed</span><select value={current?.playback_speed ?? 1} onChange={(event) => socketRef.current?.send({ command: "set_playback_speed", value: Number(event.target.value) })}>{[0.5, 1, 2, 4, 8].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}</select></label>
+      </div>
+    </section>
   );
 }

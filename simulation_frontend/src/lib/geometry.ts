@@ -43,7 +43,7 @@ export const SENSOR_DEFINITIONS: readonly AudioSensor[] =
     };
     return {
       id: microphone.id as SensorId,
-      streamId: microphone.id,
+      streamId: microphone.id as SensorId,
       label: `Microphone ${microphone.id.replace("mic-", "")}`,
       shortLabel: microphone.id.toUpperCase(),
       // Shared config uses x=east and y=north. The 3D scene uses x=east,
@@ -53,6 +53,8 @@ export const SENSOR_DEFINITIONS: readonly AudioSensor[] =
       phase: style.phase,
       sensitivity: style.sensitivity,
       baseFrequency: style.baseFrequency,
+      routeDistanceM: 0,
+      lateralOffsetM: microphone.y_m,
     };
   });
 

@@ -1,72 +1,48 @@
-"use client";
-
 import { create } from "zustand";
+import type { AudioPrediction, CameraMode, ConnectionState, RailroadPayload, SensorReading, TrainState } from "@/types/simulation";
 
-import type { TrainStateEstimate } from "@/types/simulation";
+interface Snapshot { value: TrainState; receivedAt: number }
 
-interface SimulationState {
-  isRunning: boolean;
-  simulationTime: number;
-  simulationSpeed: number;
-  trainDirection: 1 | -1;
-  noiseLevel: number;
-  sourceEnabled: boolean;
-  showWaves: boolean;
-  showLinks: boolean;
-  streamEnabled: boolean;
-  socketStatus: "offline" | "connecting" | "open" | "error";
-  selectedSensorId: "mic-1" | "mic-2" | "mic-3";
-  latestEstimate: TrainStateEstimate | null;
-  toggleRunning: () => void;
-  advanceTime: (delta: number) => void;
-  setSimulationSpeed: (speed: number) => void;
-  setTrainDirection: (direction: 1 | -1) => void;
-  setNoiseLevel: (level: number) => void;
-  setSourceEnabled: (enabled: boolean) => void;
-  setShowWaves: (visible: boolean) => void;
-  setShowLinks: (visible: boolean) => void;
-  setStreamEnabled: (enabled: boolean) => void;
-  setSocketStatus: (status: SimulationState["socketStatus"]) => void;
-  setSelectedSensorId: (sensorId: SimulationState["selectedSensorId"]) => void;
-  setLatestEstimate: (estimate: TrainStateEstimate | null) => void;
-  resetEpoch: number;
-  reset: () => void;
+interface SimulationStore {
+  railroad: RailroadPayload | null;
+  current: Snapshot | null;
+  previous: Snapshot | null;
+  connection: ConnectionState;
+  error: string | null;
+  cameraMode: CameraMode;
+  cameraReset: number;
+  audioConnection: ConnectionState;
+  audioPrediction: AudioPrediction | null;
+  sensorReadings: SensorReading[];
+  setRailroad: (railroad: RailroadPayload) => void;
+  pushState: (state: TrainState) => void;
+  setConnection: (connection: ConnectionState) => void;
+  setError: (error: string | null) => void;
+  setCameraMode: (mode: CameraMode) => void;
+  setAudioConnection: (connection: ConnectionState) => void;
+  setAudioPrediction: (prediction: AudioPrediction | null) => void;
+  setSensorReadings: (readings: SensorReading[]) => void;
+  resetCamera: () => void;
 }
 
-const initialState = {
-  isRunning: true,
-  simulationTime: 0,
-  simulationSpeed: 1,
-  trainDirection: 1 as const,
-  noiseLevel: 0.06,
-  sourceEnabled: true,
-  showWaves: true,
-  showLinks: true,
-  streamEnabled: false,
-  socketStatus: "offline" as const,
-  selectedSensorId: "mic-1" as const,
-  latestEstimate: null,
-};
-
-export const useSimulationStore = create<SimulationState>((set) => ({
-  ...initialState,
-  toggleRunning: () => set((state) => ({ isRunning: !state.isRunning })),
-  advanceTime: (delta) =>
-    set((state) => ({ simulationTime: state.simulationTime + delta })),
-  setSimulationSpeed: (simulationSpeed) => set({ simulationSpeed }),
-  setTrainDirection: (trainDirection) => set({ trainDirection }),
-  setNoiseLevel: (noiseLevel) => set({ noiseLevel }),
-  setSourceEnabled: (sourceEnabled) => set({ sourceEnabled }),
-  setShowWaves: (showWaves) => set({ showWaves }),
-  setShowLinks: (showLinks) => set({ showLinks }),
-  setStreamEnabled: (streamEnabled) => set({ streamEnabled }),
-  setSocketStatus: (socketStatus) => set({ socketStatus }),
-  setSelectedSensorId: (selectedSensorId) => set({ selectedSensorId }),
-  setLatestEstimate: (latestEstimate) => set({ latestEstimate }),
-  resetEpoch: 0,
-  reset: () =>
-    set((state) => ({
-      ...initialState,
-      resetEpoch: state.resetEpoch + 1,
-    })),
+export const useSimulationStore = create<SimulationStore>((set) => ({
+  railroad: null,
+  current: null,
+  previous: null,
+  connection: "connecting",
+  error: null,
+  cameraMode: "overview",
+  cameraReset: 0,
+  audioConnection: "connecting",
+  audioPrediction: null,
+  sensorReadings: [],
+  setRailroad: (railroad) => set({ railroad }),
+  pushState: (value) => set((store) => ({ previous: store.current, current: { value, receivedAt: performance.now() } })),
+  setConnection: (connection) => set({ connection }),
+  setError: (error) => set({ error }),
+  setCameraMode: (cameraMode) => set({ cameraMode }),
+  setAudioConnection: (audioConnection) => set({ audioConnection }),
+  setAudioPrediction: (audioPrediction) => set({ audioPrediction }),
+  setSensorReadings: (sensorReadings) => set({ sensorReadings }),
+  resetCamera: () => set((store) => ({ cameraReset: store.cameraReset + 1, cameraMode: "overview" })),
 }));

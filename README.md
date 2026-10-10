@@ -1,6 +1,6 @@
 # Routz
 
-Mobile-friendly driving-route app built on Google Maps.
+The current first-stage deliverable is a working 3D railroad simulation around downtown Columbia, South Carolina.
 
 The repository also contains the acoustic simulation vertical slice. Its shared
 physical geometry lives in `shared/simulation_geometry.json`; the 3D frontend
@@ -32,6 +32,10 @@ npm run dev -- -p 3100
 Open http://localhost:3100, enable **Stream**, and inspect the acoustic estimate
 panel. The backend receives only microphone audio, timestamps, sequence numbers,
 and microphone geometry. All displayed values are simulated.
+The authoritative rail-motion service in [`backend`](backend/README.md) supplies
+the live railroad scene, while [`simulation_backend`](simulation_backend/README.md)
+supplies the acoustic estimate stream. The `frontend` directory remains the
+separate user-facing routing application from GitHub.
 
 ## Quick start (v1)
 

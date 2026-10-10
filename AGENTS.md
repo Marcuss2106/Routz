@@ -35,7 +35,12 @@ routez/
 - Read `shared/simulation_geometry.json` for the track polyline and microphone coordinates.
 - Send timestamped, synchronized audio chunks and microphone coordinates to the simulation backend. Do not send ground-truth position/speed/length/direction or a source-file hint to inference endpoints.
 - May show ground-truth position in a separate debug/evaluation channel, visibly labeled.
-- A single simulation clock is essential. Avoid independently advancing authoritative time in multiple services. For this four-folder design, the simulation frontend can own the clock and send monotonically increasing `simulation_time_s` and sequence numbers; the backend must use these timestamps rather than wall-clock receipt times.
+- A single simulation clock is essential. `backend/` owns the authoritative clock, route distance, and train state; `simulation-frontend` interpolates snapshots for rendering and derives synchronized sensor chunks from that clock for `simulation_backend`.
+
+**backend (railroad simulation service)**
+- FastAPI service for cached SCDOT railroad geometry, graph/route selection, coordinate conversion, and shared authoritative train motion.
+- Publishes geometry over HTTP and state at about 10 Hz over WebSocket, accepting play/pause/restart/playback-speed commands from any client.
+- This service runs on port 8000. `simulation_backend` runs on port 8001 and consumes its clock indirectly through timestamped frontend audio chunks.
 
 **simulation-backend**
 - Receive audio chunks from the simulation frontend over a persistent WebSocket (preferred for continuous audio).
@@ -138,7 +143,10 @@ The physical source of truth is `shared/simulation_geometry.json`; the wire sour
 }
 ```
 
-Each live chunk contains 4,000 PCM16 samples per microphone. The frontend sends only microphone signals and geometry, plus synchronization metadata; it sends no train state or source-file hint. The socket is `ws://localhost:8000/ws/simulation`.
+Each live chunk contains 4,000 PCM16 samples per microphone. The frontend sends
+only microphone signals and geometry, plus synchronization metadata; it sends no
+train state or source-file hint. The audio inference socket is
+`ws://localhost:8001/ws/simulation`.
 
 **Simulation backend -> user backend and simulation frontend**
 
@@ -207,13 +215,14 @@ cp backend/.env.example backend/.env
 
 ```dotenv
 NEXT_PUBLIC_SIMULATION_WS_URL=ws://localhost:8000/ws/simulation
+NEXT_PUBLIC_AUDIO_WS_URL=ws://localhost:8001/ws/simulation
 ```
 
 `simulation-backend/.env.example` (Python/FastAPI, server-side):
 
 ```dotenv
-SIMULATION_ALLOWED_ORIGINS=http://localhost:3100
-USER_BACKEND_PREDICTIONS_URL=http://localhost:8001/api/predictions
+SIMULATION_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3100
+USER_BACKEND_PREDICTIONS_URL=http://localhost:8002/api/predictions
 INTERNAL_API_TOKEN=replace-with-shared-private-token
 AUDIO_SAMPLE_RATE_HZ=16000
 ```
@@ -236,7 +245,7 @@ ELEVENLABS_API_KEY=replace-with-private-key-if-generated-server-side
 USER_ALLOWED_ORIGINS=http://localhost:3001
 ```
 
-- **These are proposed variable names and endpoints, not existing implementations.** Change templates when actual code or port assignments differ. Example local ports assume simulation frontend `3000`, user frontend `3001`, simulation backend `8000`, user backend `8001`.
+- Current local ports are simulation frontend `3000`, rail-motion backend `8000`, audio inference backend `8001`, and reserved user backend `8002`.
 - Next.js exposes **all `NEXT_PUBLIC_*` variables to the browser**. Only use that prefix for intentionally public configuration. Google Maps browser keys are not secrets: restrict them by HTTP referrer and API; keep Google Routes server keys private and restrict them separately.
 - If ElevenLabs is called from the user backend, keep its key there. Never place a secret ElevenLabs key in a browser-exposed variable; use a backend endpoint or approved short-lived token mechanism for browser voice interactions.
 - The same `INTERNAL_API_TOKEN` value must be configured in both Python simulation backend and user backend. Authenticate prediction ingestion (e.g., `Authorization: Bearer <token>`) and use TLS/HTTPS in deployment. Do not put this token in either frontend.
