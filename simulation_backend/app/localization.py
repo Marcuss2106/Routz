@@ -1,26 +1,36 @@
-"""GCC-PHAT delays and a position constrained to the rail line."""
+"""GCC-PHAT delay estimation constrained to the shared rail polyline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
 from app.denoise import denoise_channels
-from app.geometry import SPEED_OF_SOUND_MPS, TRACK_Y_M, MicrophonePosition
+from app.geometry import (
+    ACOUSTIC_FIELD_END_S,
+    ACOUSTIC_FIELD_START_S,
+    SPEED_OF_SOUND_MPS,
+    MicrophonePosition,
+    rail_point_at_s,
+)
 
 GCC_BAND_HZ = (150.0, 2500.0)
 MAX_DELAY_S = 0.70
 MIN_PEAK_PROMINENCE = 8.0
-MAX_DELAY_COST_S2 = 0.005
-SEARCH_MARGIN_M = 40.0
+MAX_DELAY_RESIDUAL_S = 0.012
+SEARCH_MARGIN_M = 80.0
 
 
 @dataclass(frozen=True)
 class LocalizationResult:
     position_m: float | None
-    delay_cost_s2: float | None
-    peak_prominence: float | None
+    position_error_m: float | None
+    delay_residual_s: float | None
+    confidence: float
+    peak_prominence: float | None = None
+    active: bool = False
 
 
 def gcc_phat_delay_s(
@@ -29,12 +39,11 @@ def gcc_phat_delay_s(
     sample_rate_hz: int,
     max_delay_s: float = MAX_DELAY_S,
 ) -> tuple[float, float]:
-    """Return how many seconds `sig` lags `ref`, and the peak prominence.
-
-    A positive delay means `sig` arrives later than `ref`.
-    """
+    """Return how many seconds ``sig`` lags ``ref`` and the peak prominence."""
     sig = np.ascontiguousarray(sig, dtype=np.float64)
     ref = np.ascontiguousarray(ref, dtype=np.float64)
+    sig = sig - np.mean(sig)
+    ref = ref - np.mean(ref)
     nfft = 1 << int(np.ceil(np.log2(len(sig) + len(ref))))
     sig_spectrum = np.fft.rfft(sig, n=nfft)
     ref_spectrum = np.fft.rfft(ref, n=nfft)
@@ -53,9 +62,9 @@ def gcc_phat_delay_s(
     delta = 0.0
     if 0 < peak_index < len(window) - 1:
         left, center, right = window[peak_index - 1], window[peak_index], window[peak_index + 1]
-        denom = left - 2.0 * center + right
-        if denom != 0.0:
-            delta = 0.5 * (left - right) / denom
+        denominator = left - 2.0 * center + right
+        if denominator != 0.0:
+            delta = 0.5 * (left - right) / denominator
             if not np.isfinite(delta) or abs(delta) > 1.0:
                 delta = 0.0
     delay_s = (peak_index - max_shift + delta) / sample_rate_hz
@@ -68,21 +77,24 @@ def estimate_rail_position_m(
     microphones: list[MicrophonePosition],
     sample_rate_hz: int,
 ) -> LocalizationResult:
-    """Estimate along-track position from synchronized channels.
-
-    The source coordinate used to synthesize a test signal is not an input.
-    """
-    if len(channels) != len(microphones) or len(channels) < 2:
-        raise ValueError("channels and microphones must align and contain at least two")
+    """Estimate ``s`` along the rail using audio and microphone geometry only."""
+    if len(channels) != len(microphones) or len(channels) < 3:
+        raise ValueError("channels and microphones must align and contain three microphones")
     lengths = {len(channel) for channel in channels}
     if len(lengths) != 1 or lengths.pop() == 0:
         raise ValueError("channels must be non-empty and the same length")
     if any(not np.isfinite(channel).all() for channel in channels):
-        return LocalizationResult(None, None, None)
+        return _rejected()
+
+    raw_rms = [float(np.sqrt(np.mean(np.square(channel)))) for channel in channels]
+    if max(raw_rms) < 1e-5 or min(raw_rms) < 1e-5:
+        return _rejected()
 
     denoised = denoise_channels(channels, sample_rate_hz)
-    if any(float(np.max(np.abs(channel))) < 1e-8 for channel in denoised):
-        return LocalizationResult(None, None, None)
+    if any(not np.isfinite(channel).all() for channel in denoised):
+        return _rejected()
+    if any(float(np.sqrt(np.mean(np.square(channel)))) < 1e-6 for channel in denoised):
+        return _rejected()
 
     pairs: list[tuple[int, int, float, float]] = []
     for sig_index in range(len(denoised)):
@@ -91,42 +103,72 @@ def estimate_rail_position_m(
                 denoised[sig_index], denoised[ref_index], sample_rate_hz
             )
             pairs.append((sig_index, ref_index, delay_s, prominence))
+    if not pairs:
+        return _rejected()
 
-    mic_x = np.array([mic.x_m for mic in microphones], dtype=np.float64)
-    mic_y = np.array([mic.y_m - TRACK_Y_M for mic in microphones], dtype=np.float64)
-    x_min = float(np.min(mic_x) - SEARCH_MARGIN_M)
-    x_max = float(np.max(mic_x) + SEARCH_MARGIN_M)
-    coarse = np.linspace(x_min, x_max, int((x_max - x_min) / 0.5) + 1)
-    best_x, best_cost = _best_rail_x(coarse, mic_x, mic_y, pairs)
-    fine = np.linspace(best_x - 1.0, best_x + 1.0, 41)
-    best_x, best_cost = _best_rail_x(fine, mic_x, mic_y, pairs)
     prominence = min(pair[3] for pair in pairs)
-    if (
-        not np.isfinite(best_cost)
-        or best_cost > MAX_DELAY_COST_S2
-        or not np.isfinite(prominence)
-        or prominence < MIN_PEAK_PROMINENCE
-    ):
-        return LocalizationResult(None, float(best_cost), float(prominence))
-    return LocalizationResult(float(best_x), float(best_cost), float(prominence))
+    if not np.isfinite(prominence) or prominence < MIN_PEAK_PROMINENCE:
+        return LocalizationResult(None, None, None, 0.0, float(prominence), False)
+
+    search_start = ACOUSTIC_FIELD_START_S - SEARCH_MARGIN_M
+    search_end = ACOUSTIC_FIELD_END_S + SEARCH_MARGIN_M
+    coarse = np.linspace(search_start, search_end, int((search_end - search_start) / 1.0) + 1)
+    best_s, best_cost, second_cost = _best_rail_s(coarse, microphones, pairs)
+    fine = np.linspace(best_s - 2.0, best_s + 2.0, 81)
+    best_s, best_cost, _ = _best_rail_s(fine, microphones, pairs)
+
+    delay_residual_s = math.sqrt(best_cost / len(pairs)) if np.isfinite(best_cost) else float("inf")
+    ambiguity = 1.0
+    if second_cost > 0.0 and np.isfinite(second_cost):
+        ambiguity = min(1.0, max(0.0, (second_cost - best_cost) / second_cost * 4.0))
+    peak_confidence = min(1.0, max(0.0, (prominence - MIN_PEAK_PROMINENCE) / 18.0 + 0.35))
+    residual_confidence = math.exp(-delay_residual_s / 0.0035)
+    confidence = max(0.0, min(1.0, peak_confidence * residual_confidence * max(0.25, ambiguity)))
+    position_error_m = max(0.75, delay_residual_s * SPEED_OF_SOUND_MPS * 2.0)
+
+    if not np.isfinite(delay_residual_s) or delay_residual_s > MAX_DELAY_RESIDUAL_S or confidence < 0.18:
+        return LocalizationResult(
+            None,
+            position_error_m,
+            delay_residual_s,
+            confidence,
+            float(prominence),
+            False,
+        )
+    return LocalizationResult(
+        float(best_s),
+        float(position_error_m),
+        float(delay_residual_s),
+        float(confidence),
+        float(prominence),
+        True,
+    )
 
 
-def _best_rail_x(
+def _best_rail_s(
     candidates_m: np.ndarray,
-    mic_x: np.ndarray,
-    mic_y: np.ndarray,
+    microphones: list[MicrophonePosition],
     pairs: list[tuple[int, int, float, float]],
-) -> tuple[float, float]:
-    best_cost = float("inf")
-    best_x = float(candidates_m[0])
-    for rail_x in candidates_m:
-        distances = np.hypot(rail_x - mic_x, mic_y)
+) -> tuple[float, float, float]:
+    scored: list[tuple[float, float]] = []
+    for rail_s in candidates_m:
+        rail_x, rail_y = rail_point_at_s(float(rail_s))
+        distances = np.array(
+            [math.hypot(rail_x - mic.x_m, rail_y - mic.y_m) for mic in microphones],
+            dtype=np.float64,
+        )
         cost = 0.0
-        for sig_index, ref_index, delay_s, _prominence in pairs:
+        for sig_index, ref_index, delay_s, prominence in pairs:
             predicted_s = (distances[sig_index] - distances[ref_index]) / SPEED_OF_SOUND_MPS
             residual = predicted_s - delay_s
-            cost += float(residual * residual)
-        if cost < best_cost:
-            best_cost = cost
-            best_x = float(rail_x)
-    return best_x, best_cost
+            weight = min(2.0, max(0.5, prominence / 12.0))
+            cost += float(weight * residual * residual)
+        scored.append((cost, float(rail_s)))
+    scored.sort(key=lambda item: item[0])
+    best_cost, best_s = scored[0]
+    second_cost = scored[1][0] if len(scored) > 1 else float("inf")
+    return best_s, best_cost, second_cost
+
+
+def _rejected() -> LocalizationResult:
+    return LocalizationResult(None, None, None, 0.0, None, False)

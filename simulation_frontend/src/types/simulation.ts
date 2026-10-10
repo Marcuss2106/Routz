@@ -1,4 +1,5 @@
 export type ScenePoint = [number, number, number];
+export type GroundPosition = [number, number, number];
 
 export interface RailLine {
   id: string;
@@ -58,6 +59,7 @@ export interface VehicleState {
   heading_deg: number;
 }
 
+/** Ground truth used only by the renderer and audio synthesizer. */
 export interface TrainState {
   type: "train_state";
   train_id: string;
@@ -82,16 +84,21 @@ export type SimulationCommand =
   | { command: "play" | "pause" | "restart" }
   | { command: "set_playback_speed"; value: number };
 
-export type SensorId = "sensor-1" | "sensor-2" | "sensor-3";
+export type SensorId = "mic-1" | "mic-2" | "mic-3";
 
 export interface AudioSensor {
   id: SensorId;
-  streamId: "mic-1" | "mic-2" | "mic-3";
+  streamId: SensorId;
   label: string;
-  routeDistanceM: number;
-  lateralOffsetM: number;
+  /** Shared acoustic geometry in the local east/elevation/north scene basis. */
+  position: GroundPosition;
   color: string;
   phase: number;
+  sensitivity: number;
+  baseFrequency: number;
+  /** Visual-only placement fields for the live SCDOT route renderer. */
+  routeDistanceM: number;
+  lateralOffsetM: number;
 }
 
 export interface SensorReading {
@@ -118,21 +125,60 @@ export interface MicrophoneAudioChunk {
   simulation_time_s: number;
   sample_rate_hz: number;
   duration_ms: number;
-  source_file: string;
   microphones: Array<{
-    id: string;
+    id: SensorId;
     x_m: number;
     y_m: number;
-    z_m: number;
     audio_pcm16_base64: string;
   }>;
 }
 
-export interface AudioPrediction {
-  type: "crossing_prediction" | "ingest_error";
-  status?: "tracking" | "unknown";
-  estimated_position_m?: number | null;
-  estimated_speed_mps?: number | null;
-  sequence?: number;
-  reason?: string;
+export type EstimateStatus = "detected" | "tracking" | "length_pending" | "cleared" | "unknown";
+
+export interface EstimateConfidence {
+  position: number;
+  speed: number;
+  length: number;
+  direction: number;
 }
+
+export interface EstimateUncertainty {
+  position_m: number | null;
+  speed_mps: number | null;
+  length_m: number | null;
+  direction_deg: number | null;
+}
+
+export interface TrainStateEstimate {
+  type: "train_state_estimate";
+  simulation_id: string;
+  sequence: number;
+  simulation_time_s: number;
+  train_id: string;
+  track_id: string;
+  latitude: number | null;
+  longitude: number | null;
+  speed_mps: number | null;
+  length_m: number | null;
+  direction_deg_from_east: number | null;
+  status: EstimateStatus;
+  confidence: EstimateConfidence;
+  uncertainty: EstimateUncertainty;
+  source: "acoustic_array";
+  label: "simulated_acoustic_estimate";
+  track_position_m?: number | null;
+  crossings?: Array<{
+    crossing_id: string;
+    eta_seconds: number | null;
+    estimated_blockage_seconds: number | null;
+    status: "approaching" | "blocking" | "clear" | "unknown";
+  }>;
+}
+
+export interface AudioPredictionError {
+  type: "ingest_error";
+  reason?: string;
+  detail?: string;
+}
+
+export type AudioPrediction = TrainStateEstimate | AudioPredictionError;

@@ -20,12 +20,16 @@ export class SimulationSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private attempt = 0;
+
   constructor(private callbacks: Callbacks) {}
 
   connect() {
     this.stopped = false;
     this.socket = new WebSocket(wsUrl);
-    this.socket.onopen = () => { this.attempt = 0; this.callbacks.onConnection("connected"); };
+    this.socket.onopen = () => {
+      this.attempt = 0;
+      this.callbacks.onConnection("connected");
+    };
     this.socket.onmessage = (event) => {
       const message = JSON.parse(event.data) as TrainState | { type: string; message?: string };
       if (message.type === "train_state") this.callbacks.onState(message as TrainState);

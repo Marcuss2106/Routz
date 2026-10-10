@@ -2,6 +2,7 @@ import {
   AUDIO_CHUNK_DURATION_MS,
   AUDIO_SAMPLE_RATE_HZ,
   generateMicrophoneSamples,
+  mapRouteDistanceToAcousticS,
 } from "@/lib/simulation";
 import type {
   AudioPrediction,
@@ -34,7 +35,9 @@ export function buildAudioChunk(
   state: TrainState,
   sensors: AudioSensor[],
   audioSource: TrainAudioSource | null,
+  routeLengthM: number,
 ): MicrophoneAudioChunk {
+  const trainPositionM = mapRouteDistanceToAcousticS(state.distance_along_route_m, routeLengthM);
   return {
     type: "microphone_audio_chunk",
     simulation_id: AUDIO_SIMULATION_ID,
@@ -42,14 +45,19 @@ export function buildAudioChunk(
     simulation_time_s: Number(state.simulation_time_s.toFixed(3)),
     sample_rate_hz: AUDIO_SAMPLE_RATE_HZ,
     duration_ms: AUDIO_CHUNK_DURATION_MS,
-    source_file: "train.wav",
     microphones: sensors.map((sensor) => ({
       id: sensor.streamId,
-      x_m: sensor.routeDistanceM,
-      y_m: sensor.lateralOffsetM,
-      z_m: 0,
+      x_m: sensor.position[0],
+      y_m: sensor.position[2],
       audio_pcm16_base64: encodePcm16Base64(
-        generateMicrophoneSamples(sensor, state.simulation_time_s, state.distance_along_route_m, audioSource),
+        generateMicrophoneSamples(
+          sensor,
+          state.simulation_time_s,
+          trainPositionM,
+          state.train_length_m,
+          audioSource,
+          state.speed_mps,
+        ),
       ),
     })),
   };
@@ -59,6 +67,7 @@ export class AudioSimulationSocket {
   private socket: WebSocket | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+
   constructor(
     private onConnection: (state: ConnectionState) => void,
     private onPrediction: (prediction: AudioPrediction) => void,

@@ -1,4 +1,25 @@
+import {
+  AUDIO_CHUNK_SAMPLES,
+  AUDIO_SAMPLE_RATE_HZ,
+  SCENE_SCALE,
+  SENSOR_DEFINITIONS,
+  SIMULATION_START_MARGIN_M,
+  SOUND_SPEED_MPS,
+  TRACK_LENGTH_M,
+  clamp,
+  distanceOnGround,
+  railPositionToGround,
+} from "@/lib/geometry";
 import type { AudioSensor, ScenePoint, SensorReading, TrainAudioSource, TrainState } from "@/types/simulation";
+
+export {
+  AUDIO_CHUNK_DURATION_MS,
+  AUDIO_CHUNK_SAMPLES,
+  AUDIO_SAMPLE_RATE_HZ,
+  SENSOR_DEFINITIONS,
+  SOUND_SPEED_MPS,
+  TRACK_LENGTH_M,
+} from "@/lib/geometry";
 
 export const VISUAL_EXAGGERATION = {
   railGaugeM: 18,
@@ -9,19 +30,22 @@ export const VISUAL_EXAGGERATION = {
   sensorScale: 9,
 } as const;
 
-export const AUDIO_SAMPLE_RATE_HZ = 16_000;
-export const AUDIO_CHUNK_DURATION_MS = 250;
-export const AUDIO_CHUNK_SAMPLES = 4000;
-export const SOUND_SPEED_MPS = 343;
 export const VEHICLE_OFFSETS_M = [0, 44, 80, 116, 152, 188] as const;
 
+/**
+ * Keep the SCDOT scene from GitHub while placing the displayed microphones in
+ * the same relative array order as the shared acoustic geometry. Their actual
+ * x/y coordinates are always taken from shared/simulation_geometry.json when
+ * an audio chunk is built.
+ */
 export function getAudioSensors(routeLengthM: number): AudioSensor[] {
-  const firstSensorM = routeLengthM * .34;
-  return [
-    { id: "sensor-1", streamId: "mic-1", label: "Sensor 01", routeDistanceM: firstSensorM, lateralOffsetM: 58, color: "#7d8d71", phase: 0.3 },
-    { id: "sensor-2", streamId: "mic-2", label: "Sensor 02", routeDistanceM: firstSensorM + 100, lateralOffsetM: -64, color: "#a94334", phase: 2.1 },
-    { id: "sensor-3", streamId: "mic-3", label: "Sensor 03", routeDistanceM: firstSensorM + 200, lateralOffsetM: 56, color: "#727873", phase: 4.2 },
-  ];
+  const arrayStartM = routeLengthM * 0.34;
+  const visualArrayLengthM = Math.min(1000, routeLengthM * 0.2);
+  return SENSOR_DEFINITIONS.map((sensor) => ({
+    ...sensor,
+    routeDistanceM: arrayStartM + (sensor.position[0] / TRACK_LENGTH_M) * visualArrayLengthM,
+    lateralOffsetM: sensor.position[2],
+  }));
 }
 
 export function sampleRoute(points: ScenePoint[], distanceM: number) {
@@ -74,7 +98,7 @@ export function simulateSensorReadings(state: TrainState, sensors: AudioSensor[]
       decibels: Math.round(-62 + amplitude * 62),
       distance,
       delaySeconds: distance / SOUND_SPEED_MPS,
-      frequency: Math.round(90 + amplitude * 70),
+      frequency: Math.round(sensor.baseFrequency + amplitude * 70),
       waveform: Array.from({ length: 40 }, (_, index) =>
         amplitude * Math.sin((index / 40) * Math.PI * 8 + state.simulation_time_s * 5 + sensor.phase),
       ),
@@ -90,26 +114,54 @@ function sourceSample(source: TrainAudioSource | null, time: number, phase: numb
   return Math.sin(time * Math.PI * 2 * 92) * 0.55 + Math.sin(time * Math.PI * 2 * 184 + phase) * 0.22;
 }
 
+function deterministicNoise(index: number, time: number, phase: number) {
+  return Math.sin(index * 12.9898 + time * 78.233 + phase * 37.719) * 2 - 1;
+}
+
+/**
+ * Generate microphone-only observations from a moving extended source. The
+ * train state and length arguments are renderer truth and never enter the wire
+ * payload; they are used only to create the audio samples.
+ */
 export function generateMicrophoneSamples(
   sensor: AudioSensor,
   simulationTime: number,
-  trainDistanceM: number,
+  trainPositionM: number,
+  trainLengthM: number,
   audioSource: TrainAudioSource | null,
-) {
-  // Hold the acoustic source fixed for each 1 s analysis window. This mirrors
-  // the localizer's documented point-source approximation while the renderer
-  // continues to show the physically moving six-vehicle consist.
-  const consistCenterM = trainDistanceM - 97 - (simulationTime % 1) * 16;
-  const distance = Math.hypot(consistCenterM - sensor.routeDistanceM, sensor.lateralOffsetM);
-  const delay = distance / SOUND_SPEED_MPS;
-  const attenuation = Math.max(0.035, 1 / (1 + distance * 0.014));
+  signedSpeedMps = 16,
+  noiseLevel = 0.035,
+): Float32Array {
   const samples = new Float32Array(AUDIO_CHUNK_SAMPLES);
+  const segmentCount = 8;
   for (let index = 0; index < samples.length; index += 1) {
-    const time = simulationTime + index / AUDIO_SAMPLE_RATE_HZ - delay;
-    const engine = sourceSample(audioSource, time, sensor.phase);
-    const rhythm = 0.72 + 0.28 * Math.sin(time * Math.PI * 2 * 1.1);
-    const noise = Math.sin(index * 12.9898 + simulationTime * 78.233 + sensor.phase * 37.719) * 0.012;
-    samples[index] = Math.max(-1, Math.min(1, engine * rhythm * attenuation + noise));
+    const receiveTime = simulationTime + index / AUDIO_SAMPLE_RATE_HZ;
+    let signal = 0;
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      const fraction = segmentIndex / (segmentCount - 1) - 0.5;
+      const segmentOffsetM = fraction * trainLengthM;
+      const approximateSourceS = trainPositionM + segmentOffsetM;
+      const approximatePosition = railPositionToGround(approximateSourceS);
+      const approximateDistance = distanceOnGround(sensor.position, approximatePosition);
+      const emissionTime = receiveTime - approximateDistance / SOUND_SPEED_MPS;
+      const movingSourceS = trainPositionM + signedSpeedMps * (emissionTime - simulationTime) + segmentOffsetM;
+      const sourcePosition = railPositionToGround(movingSourceS);
+      const distance = distanceOnGround(sensor.position, sourcePosition);
+      const attenuation = 1 / (1 + distance * 0.035);
+      const locomotiveGain = segmentIndex === segmentCount - 1 ? 1.45 : 0.62;
+      const carVariation = 0.86 + 0.08 * Math.sin(segmentIndex * 1.7 + sensor.phase);
+      signal += sourceSample(audioSource, emissionTime, sensor.phase + segmentIndex * 0.037) * attenuation * locomotiveGain * carVariation;
+    }
+    signal /= segmentCount;
+    const noise = deterministicNoise(index, simulationTime, sensor.phase);
+    samples[index] = clamp(signal * 0.78 + noise * noiseLevel * 0.16, -1, 1);
   }
   return samples;
 }
+
+export function mapRouteDistanceToAcousticS(distanceM: number, routeLengthM: number) {
+  const normalized = routeLengthM > 0 ? distanceM / routeLengthM : 0;
+  return clamp(normalized * (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2) - SIMULATION_START_MARGIN_M, -SIMULATION_START_MARGIN_M, TRACK_LENGTH_M + SIMULATION_START_MARGIN_M);
+}
+
+export { SCENE_SCALE };

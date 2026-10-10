@@ -75,7 +75,7 @@ export default function SimulationApp() {
   }, []);
 
   useEffect(() => {
-    if (!current) return;
+    if (!current || !railroad) return;
     const store = useSimulationStore.getState();
     store.setSensorReadings(simulateSensorReadings(current, sensors));
     if (current.simulation_time_s + .001 < nextAudioTimeRef.current - .25) {
@@ -95,24 +95,35 @@ export default function SimulationApp() {
           current.distance_along_route_m - current.speed_mps * (current.simulation_time_s - sampleTime),
         ),
       };
-      const chunk = buildAudioChunk(sequenceRef.current, sampledState, sensors, audioSource);
+      const chunk = buildAudioChunk(
+        sequenceRef.current,
+        sampledState,
+        sensors,
+        audioSource,
+        railroad.route.length_m,
+      );
       if (!audioSocketRef.current?.send(chunk)) break;
       sequenceRef.current += 1;
       nextAudioTimeRef.current += .25;
       chunksSent += 1;
     }
-  }, [audioSource, current, sensors]);
+  }, [audioSource, current, railroad, sensors]);
 
   return (
     <main className="app-shell">
       <header className="brand"><div className="brand-mark" aria-hidden="true"><span /><span /></div><div><p>Columbia rail study</p><h1>Routz</h1></div></header>
       <aside className="location-card"><span className="eyebrow">South Carolina · 10 mile radius</span><strong>Downtown Columbia</strong><span>34.0007° N · 81.0348° W</span></aside>
       <aside className="sensor-card">
-        <div className="sensor-card-heading"><AudioLines size={15} /><span>Acoustic array</span><em className={audioConnection}>{audioConnection === "connected" ? audioPrediction?.status ?? "warming up" : audioConnection}</em></div>
+        <div className="sensor-card-heading"><AudioLines size={15} /><span>Acoustic array</span><em className={audioConnection}>{audioConnection === "connected" ? (audioPrediction?.type === "train_state_estimate" ? audioPrediction.status : audioPrediction?.type === "ingest_error" ? "ingest error" : "warming up") : audioConnection}</em></div>
         {sensors.map((sensor) => {
           const reading = sensorReadings.find((item) => item.sensorId === sensor.id);
           return <div className="sensor-row" key={sensor.id}><i style={{ background: sensor.color }} /><span>{sensor.label}</span><strong>{reading ? `${reading.decibels} dB` : "—"}</strong></div>;
         })}
+        {audioPrediction?.type === "train_state_estimate" && <>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Position</span><strong>{audioPrediction.track_position_m == null ? "—" : `${audioPrediction.track_position_m.toFixed(1)} m`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Speed / direction</span><strong>{audioPrediction.speed_mps == null ? "—" : `${audioPrediction.speed_mps.toFixed(1)} m/s · ${audioPrediction.direction_deg_from_east?.toFixed(0) ?? "—"}°`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Length</span><strong>{audioPrediction.length_m == null ? "pending" : `${audioPrediction.length_m.toFixed(1)} m`}</strong></div>
+        </>}
       </aside>
       {!railroad && !error && <div className="scene-message"><LoaderCircle className="spin" /> Loading SCDOT rail geometry…</div>}
       {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span></div>}

@@ -66,7 +66,7 @@ function CameraRig({ routeLength }: { routeLength: number }) {
     if (transition.current) {
       const movement = transition.current;
       const progress = Math.min(1, (performance.now() - movement.startedAt) / 1200);
-      const eased = progress < .5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
       camera.position.lerpVectors(movement.fromPosition, movement.toPosition, eased);
       controls.current.target.lerpVectors(movement.fromTarget, movement.toTarget, eased);
       controls.current.update();
@@ -105,11 +105,11 @@ export default function TrainScene() {
         <SoundWaves route={railroad.route.points} />
         <Train route={railroad.route.points} />
         {sensors.map((sensor) => {
-          const reading = sensorReadings.find((item) => item.sensorId === sensor.id) ?? { sensorId: sensor.id, amplitude: .04, decibels: -60, distance: 0, delaySeconds: 0, frequency: 90, waveform: [] };
+          const reading = sensorReadings.find((item) => item.sensorId === sensor.id) ?? { sensorId: sensor.id, amplitude: 0.04, decibels: -60, distance: 0, delaySeconds: 0, frequency: 90, waveform: [] };
           const position = sensorScenePosition(railroad.route.points, sensor);
           return (
             <group key={sensor.id} position={position} scale={VISUAL_EXAGGERATION.sensorScale}>
-              <Microphone sensor={sensor} reading={reading} selected={reading.amplitude > .45} />
+              <Microphone sensor={sensor} reading={reading} selected={reading.amplitude > 0.45} />
               <Html position={[0, 4.05, 0]} center distanceFactor={950} style={{ pointerEvents: "none" }}>
                 <div className="scene-sensor-label"><strong>{sensor.label}</strong><span>{reading.decibels} dB</span></div>
               </Html>

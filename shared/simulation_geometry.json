@@ -1,0 +1,21 @@
+{
+  "track_id": "acoustic-track-001",
+  "origin": {
+    "latitude": 34.0007,
+    "longitude": -81.0348
+  },
+  "track": [
+    { "x_m": 0, "y_m": 0 },
+    { "x_m": 500, "y_m": 0 },
+    { "x_m": 1000, "y_m": 300 }
+  ],
+  "microphones": [
+    { "id": "mic-1", "x_m": 0, "y_m": 20 },
+    { "id": "mic-2", "x_m": 100, "y_m": 20 },
+    { "id": "mic-3", "x_m": 50, "y_m": -30 }
+  ],
+  "crossings": [
+    { "id": "crossing-001", "s_m": 300, "name": "Demo crossing 300 m" },
+    { "id": "crossing-002", "s_m": 850, "name": "Demo crossing 850 m" }
+  ]
+}

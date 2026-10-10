@@ -1,4 +1,4 @@
-"""Wire contracts for microphone chunks and crossing predictions."""
+"""Wire contracts for acoustic observations and train-state estimates."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from app.geometry import CHUNK_DURATION_MS, SAMPLE_RATE_HZ, SAMPLES_PER_CHUNK
 
 
 def pcm16_base64_to_floats(payload: str) -> list[float]:
-    """Decode the little-endian PCM16 encoding used by the simulation frontend."""
+    """Decode the little-endian PCM16 encoding used by the simulator."""
     try:
         raw = base64.b64decode(payload, validate=True)
     except Exception as exc:
@@ -28,14 +28,13 @@ def pcm16_base64_to_floats(payload: str) -> list[float]:
 
 
 class MicrophoneChunk(BaseModel):
-    """One microphone. `y_m` is elevation when `z_m` is the other ground axis."""
+    """One synchronized microphone signal and its east/north geometry."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
     x_m: float
     y_m: float
-    z_m: float = 0.0
     audio: list[float] | None = None
     audio_pcm16_base64: str | None = None
 
@@ -45,6 +44,7 @@ class MicrophoneChunk(BaseModel):
             raise ValueError("send audio or audio_pcm16_base64, not both")
         if self.audio_pcm16_base64 is not None:
             self.audio = pcm16_base64_to_floats(self.audio_pcm16_base64)
+            self.audio_pcm16_base64 = None
         if self.audio is None:
             raise ValueError("audio is required")
         return self
@@ -56,21 +56,17 @@ class MicrophoneChunk(BaseModel):
 
 
 class MicrophoneAudioChunk(BaseModel):
-    """One synchronized capture from every microphone.
+    """A timestamped array capture; it contains no train ground truth."""
 
-    `simulation_time_s` is the simulation clock at the first sample, not the
-    wall-clock time this process received the message.
-    """
-
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["microphone_audio_chunk"]
     simulation_id: str = Field(min_length=1)
     sequence: int = Field(ge=0)
+    # This is the simulation timestamp of the first sample in each channel.
     simulation_time_s: float = Field(ge=0)
     sample_rate_hz: int
     duration_ms: int
-    source_file: str | None = None
     microphones: list[MicrophoneChunk]
 
     @model_validator(mode="after")
@@ -91,26 +87,12 @@ class MicrophoneAudioChunk(BaseModel):
                 )
         return self
 
-    def uses_xz_ground_plane(self) -> bool:
-        """The simulation scene stores elevation in y and the ground offset in z."""
-        return any(mic.z_m != 0.0 for mic in self.microphones)
-
-    def ground_lateral_m(self, mic: MicrophoneChunk) -> float:
-        if self.uses_xz_ground_plane():
-            return mic.z_m
-        return mic.y_m
-
 
 class SimulationReset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["simulation_reset"]
     simulation_id: str = Field(min_length=1)
-
-
-class LatLon(BaseModel):
-    latitude: float
-    longitude: float
 
 
 class CrossingForecast(BaseModel):
@@ -120,25 +102,50 @@ class CrossingForecast(BaseModel):
     status: Literal["approaching", "blocking", "clear", "unknown"]
 
 
-class CrossingPredictionEvent(BaseModel):
-    """Estimate only. `label` marks the frontend copy so it is not read as truth."""
+class EstimateConfidence(BaseModel):
+    position: float = Field(ge=0, le=1)
+    speed: float = Field(ge=0, le=1)
+    length: float = Field(ge=0, le=1)
+    direction: float = Field(ge=0, le=1)
 
-    type: Literal["crossing_prediction"] = "crossing_prediction"
+
+class EstimateUncertainty(BaseModel):
+    position_m: float | None = Field(default=None, ge=0)
+    speed_mps: float | None = Field(default=None, ge=0)
+    length_m: float | None = Field(default=None, ge=0)
+    direction_deg: float | None = Field(default=None, ge=0)
+
+
+class TrainStateEstimateEvent(BaseModel):
+    """An estimate derived from microphone audio, never from simulator truth."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["train_state_estimate"] = "train_state_estimate"
     simulation_id: str
     sequence: int
     simulation_time_s: float
     train_id: str
-    status: Literal["tracking", "unknown"]
-    estimated_position: LatLon | None
-    estimated_position_m: float | None = None
-    estimated_speed_mps: float | None
-    direction: Literal["eastbound", "westbound", "unknown"]
-    crossings: list[CrossingForecast]
-    source: Literal["simulated_audio_inference"] = "simulated_audio_inference"
-    label: Literal["estimate"] = "estimate"
+    track_id: str
+    latitude: float | None
+    longitude: float | None
+    speed_mps: float | None = Field(default=None, ge=0)
+    length_m: float | None = Field(default=None, ge=0)
+    direction_deg_from_east: float | None = Field(default=None, ge=0, le=360)
+    status: Literal["detected", "tracking", "length_pending", "cleared", "unknown"]
+    confidence: EstimateConfidence
+    uncertainty: EstimateUncertainty
+    source: Literal["acoustic_array"] = "acoustic_array"
+    label: Literal["simulated_acoustic_estimate"] = "simulated_acoustic_estimate"
+    track_position_m: float | None = None
+    crossings: list[CrossingForecast] = Field(default_factory=list)
 
     def frontend_payload(self) -> dict:
         return self.model_dump(mode="json")
 
     def user_backend_payload(self) -> dict:
-        return self.model_dump(mode="json", exclude={"estimated_position_m", "label"})
+        return self.model_dump(mode="json", exclude={"track_position_m", "label"})
+
+
+# Compatibility name for publisher integrations that still import the old type.
+CrossingPredictionEvent = TrainStateEstimateEvent
