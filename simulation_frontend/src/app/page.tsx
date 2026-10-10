@@ -7,6 +7,7 @@ import { SimulationControls } from "@/components/controls/SimulationControls";
 import { TrainScene } from "@/components/simulation/TrainScene";
 import {
   SENSOR_DEFINITIONS,
+  TRACK_LENGTH_M,
   getTrainState,
   simulateSensorReadings,
 } from "@/lib/simulation";
@@ -18,6 +19,7 @@ import {
   type SimulationSocket,
 } from "@/lib/websocket";
 import { useSimulationStore } from "@/stores/simulationStore";
+import type { TrainStateEstimate } from "@/types/simulation";
 
 export default function Home() {
   const simulationTime = useSimulationStore((state) => state.simulationTime);
@@ -29,7 +31,9 @@ export default function Home() {
   const streamEnabled = useSimulationStore((state) => state.streamEnabled);
   const resetEpoch = useSimulationStore((state) => state.resetEpoch);
   const socketStatus = useSimulationStore((state) => state.socketStatus);
+  const latestEstimate = useSimulationStore((state) => state.latestEstimate);
   const setSocketStatus = useSimulationStore((state) => state.setSocketStatus);
+  const setLatestEstimate = useSimulationStore((state) => state.setLatestEstimate);
   const selectedSensorId = useSimulationStore((state) => state.selectedSensorId);
   const setSelectedSensorId = useSimulationStore(
     (state) => state.setSelectedSensorId,
@@ -69,13 +73,23 @@ export default function Home() {
           simulation_id: DEFAULT_SIMULATION_ID,
         });
       },
+      onMessage: (message) => {
+        if (
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "train_state_estimate"
+        ) {
+          setLatestEstimate(message as TrainStateEstimate);
+        }
+      },
     });
     socketRef.current = socket;
     return () => {
       socket.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [setSocketStatus, streamEnabled]);
+  }, [setLatestEstimate, setSocketStatus, streamEnabled]);
 
   useEffect(() => {
     sequenceRef.current = 0;
@@ -153,8 +167,8 @@ export default function Home() {
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="relative h-[560px] overflow-hidden rounded-3xl border border-white/10 bg-[#07101e] shadow-2xl shadow-black/30 xl:h-[700px]">
             <div className="pointer-events-none absolute left-5 top-5 z-10 rounded-xl border border-white/10 bg-[#050914]/75 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-slate-400 backdrop-blur">
-              <div>Ground plane / 18m × 12m</div>
-              <div className="mt-1 text-slate-600">y = elevation · x/z = location</div>
+              <div>Shared rail / {TRACK_LENGTH_M.toFixed(1)} m</div>
+              <div className="mt-1 text-slate-600">x = east · z = north · y = elevation</div>
             </div>
             <TrainScene
               readings={readings}
@@ -255,6 +269,47 @@ export default function Home() {
               </div>
               <div className="mt-3 border-t border-white/10 pt-3 text-[10px] text-slate-500">
                 WebSocket: <span className="text-slate-300">{socketStatus}</span> · source: <span className="text-slate-300">{audioSource.status}</span>
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-cyan-300/10 bg-cyan-300/[0.04] p-4 text-xs">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-300">Acoustic estimate</div>
+                  <div className="mt-1 text-slate-500">Backend inference only</div>
+                </div>
+                <div className="font-mono text-[10px] text-cyan-200">
+                  {latestEstimate?.status ?? "waiting"}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-slate-500">Speed</div>
+                  <div className="mt-1 font-mono text-slate-200">
+                    {latestEstimate?.speed_mps == null ? "—" : `${latestEstimate.speed_mps.toFixed(1)} m/s`}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Length</div>
+                  <div className="mt-1 font-mono text-slate-200">
+                    {latestEstimate?.length_m == null ? "pending" : `${latestEstimate.length_m.toFixed(1)} m`}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Direction</div>
+                  <div className="mt-1 font-mono text-slate-200">
+                    {latestEstimate?.direction_deg_from_east == null ? "—" : `${latestEstimate.direction_deg_from_east.toFixed(1)}°`}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Position confidence</div>
+                  <div className="mt-1 font-mono text-slate-200">
+                    {latestEstimate == null ? "—" : `${Math.round(latestEstimate.confidence.position * 100)}%`}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 border-t border-white/10 pt-3 text-[10px] text-slate-500">
+                source: <span className="text-cyan-200">acoustic_array</span> · estimates are simulated
               </div>
             </section>
           </aside>

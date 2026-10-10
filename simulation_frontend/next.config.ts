@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -11,6 +12,7 @@ const nextConfig: NextConfig = {
         as: "*.css",
       },
     },
+    root: path.resolve(__dirname, ".."),
   },
 };
 

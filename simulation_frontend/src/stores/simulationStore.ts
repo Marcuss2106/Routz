@@ -2,6 +2,8 @@
 
 import { create } from "zustand";
 
+import type { TrainStateEstimate } from "@/types/simulation";
+
 interface SimulationState {
   isRunning: boolean;
   simulationTime: number;
@@ -13,7 +15,8 @@ interface SimulationState {
   showLinks: boolean;
   streamEnabled: boolean;
   socketStatus: "offline" | "connecting" | "open" | "error";
-  selectedSensorId: "north" | "east" | "west";
+  selectedSensorId: "mic-1" | "mic-2" | "mic-3";
+  latestEstimate: TrainStateEstimate | null;
   toggleRunning: () => void;
   advanceTime: (delta: number) => void;
   setSimulationSpeed: (speed: number) => void;
@@ -25,6 +28,7 @@ interface SimulationState {
   setStreamEnabled: (enabled: boolean) => void;
   setSocketStatus: (status: SimulationState["socketStatus"]) => void;
   setSelectedSensorId: (sensorId: SimulationState["selectedSensorId"]) => void;
+  setLatestEstimate: (estimate: TrainStateEstimate | null) => void;
   resetEpoch: number;
   reset: () => void;
 }
@@ -40,7 +44,8 @@ const initialState = {
   showLinks: true,
   streamEnabled: false,
   socketStatus: "offline" as const,
-  selectedSensorId: "north" as const,
+  selectedSensorId: "mic-1" as const,
+  latestEstimate: null,
 };
 
 export const useSimulationStore = create<SimulationState>((set) => ({
@@ -57,6 +62,7 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   setStreamEnabled: (streamEnabled) => set({ streamEnabled }),
   setSocketStatus: (socketStatus) => set({ socketStatus }),
   setSelectedSensorId: (selectedSensorId) => set({ selectedSensorId }),
+  setLatestEstimate: (latestEstimate) => set({ latestEstimate }),
   resetEpoch: 0,
   reset: () =>
     set((state) => ({

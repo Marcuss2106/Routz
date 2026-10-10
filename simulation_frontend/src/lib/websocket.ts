@@ -66,12 +66,10 @@ export function buildMicrophoneAudioChunk({
     simulation_time_s: Number(simulationTime.toFixed(3)),
     sample_rate_hz: AUDIO_SAMPLE_RATE_HZ,
     duration_ms: AUDIO_CHUNK_DURATION_MS,
-    source_file: "train.wav",
     microphones: SENSOR_DEFINITIONS.map((sensor) => ({
       id: sensor.streamId,
       x_m: sensor.position[0],
-      y_m: sensor.position[1],
-      z_m: sensor.position[2],
+      y_m: sensor.position[2],
       audio_pcm16_base64: encodePcm16Base64(
         generateMicrophoneSamples(
           sensor,

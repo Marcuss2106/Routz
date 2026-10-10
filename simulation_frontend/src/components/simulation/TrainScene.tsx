@@ -5,7 +5,7 @@ import { Grid, Html, Line, OrbitControls } from "@react-three/drei";
 import { useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 
-import { SENSOR_DEFINITIONS } from "@/lib/simulation";
+import { SCENE_SCALE, SENSOR_DEFINITIONS, TRACK_LENGTH_M } from "@/lib/geometry";
 import { useSimulationStore } from "@/stores/simulationStore";
 import { Microphone } from "@/components/simulation/Microphone";
 import { Railroad } from "@/components/simulation/Railroad";
@@ -197,7 +197,7 @@ function Ground({
         position={[0, -0.08, 0]}
         receiveShadow
       >
-        <planeGeometry args={[18, 12]} />
+        <planeGeometry args={[TRACK_LENGTH_M + 400, 800]} />
         <meshStandardMaterial
           color="#0b1424"
           roughness={0.92}
@@ -205,15 +205,15 @@ function Ground({
         />
       </mesh>
       <Grid
-        args={[18, 12]}
+        args={[TRACK_LENGTH_M + 400, 800]}
         position={[0, -0.01, 0]}
-        cellSize={1}
+        cellSize={50}
         cellThickness={0.5}
         cellColor="#1b3552"
-        sectionSize={3}
+        sectionSize={250}
         sectionThickness={0.9}
         sectionColor="#2a4a6b"
-        fadeDistance={18}
+        fadeDistance={TRACK_LENGTH_M + 400}
         fadeStrength={1.2}
         infiniteGrid={false}
       />
@@ -266,27 +266,29 @@ function SceneContents({ readings, sourcePosition, trainState }: TrainSceneProps
         color="#d7e8ff"
         shadow-mapSize={[1024, 1024]}
       />
-      <Ground
-        readings={readings}
-        sourcePosition={sourcePosition}
-        showLinks={showLinks && sourceEnabled}
-      />
-      <Train trainState={trainState} />
-      {SENSOR_DEFINITIONS.map((sensor) => {
-        const reading = readings.find((item) => item.sensorId === sensor.id);
-        if (!reading) return null;
-        return (
-          <SensorMarker
-            key={sensor.id}
-            sensor={sensor}
-            reading={reading}
-            selected={selectedSensorId === sensor.id}
-            showWaves={showWaves && sourceEnabled}
-            onSelect={() => setSelectedSensorId(sensor.id)}
-          />
-        );
-      })}
-      {sourceEnabled && <SourceEmitter position={sourcePosition} />}
+      <group scale={SCENE_SCALE}>
+        <Ground
+          readings={readings}
+          sourcePosition={sourcePosition}
+          showLinks={showLinks && sourceEnabled}
+        />
+        <Train trainState={trainState} />
+        {SENSOR_DEFINITIONS.map((sensor) => {
+          const reading = readings.find((item) => item.sensorId === sensor.id);
+          if (!reading) return null;
+          return (
+            <SensorMarker
+              key={sensor.id}
+              sensor={sensor}
+              reading={reading}
+              selected={selectedSensorId === sensor.id}
+              showWaves={showWaves && sourceEnabled}
+              onSelect={() => setSelectedSensorId(sensor.id)}
+            />
+          );
+        })}
+        {sourceEnabled && <SourceEmitter position={sourcePosition} />}
+      </group>
     </>
   );
 }
@@ -301,7 +303,7 @@ export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneP
     <Canvas
       shadows
       dpr={[1, 2]}
-      camera={{ position: [0, 8.8, 9.6], fov: 42, near: 0.1, far: 50 }}
+      camera={{ position: [22, 42, 58], fov: 42, near: 0.1, far: 220 }}
       onCreated={({ gl }) => {
         gl.setClearColor("#050914");
       }}
@@ -319,9 +321,9 @@ export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneP
       />
       <OrbitControls
         makeDefault
-        target={[0, 0, 0]}
+        target={[22, 0, 12]}
         minDistance={5}
-        maxDistance={18}
+        maxDistance={130}
         maxPolarAngle={Math.PI / 2.08}
         minPolarAngle={0.32}
         enableDamping

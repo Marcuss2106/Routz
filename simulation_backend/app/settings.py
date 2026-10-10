@@ -21,7 +21,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-        origins = os.getenv("SIMULATION_ALLOWED_ORIGINS", "http://localhost:3000")
+        origins = os.getenv("SIMULATION_ALLOWED_ORIGINS", "http://localhost:3100")
         sample_rate_hz = int(os.getenv("AUDIO_SAMPLE_RATE_HZ", str(SAMPLE_RATE_HZ)))
         if sample_rate_hz != SAMPLE_RATE_HZ:
             raise RuntimeError(
