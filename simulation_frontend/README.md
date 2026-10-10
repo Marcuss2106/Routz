@@ -13,8 +13,8 @@ train signal so the scene remains usable.
 
 The optional **Stream** control sends synchronized JSON WebSocket chunks to
 `NEXT_PUBLIC_SIMULATION_WS_URL` (default: `ws://localhost:8000/ws/simulation`).
-The current GitHub simulation backend is still a scaffold, so streaming is
-off by default.
+Streaming is off by default. The simulation backend accepts those PCM16 chunks
+on `/ws/simulation`.
 
 ## Getting Started
 

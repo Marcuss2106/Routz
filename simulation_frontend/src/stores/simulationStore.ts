@@ -25,6 +25,7 @@ interface SimulationState {
   setStreamEnabled: (enabled: boolean) => void;
   setSocketStatus: (status: SimulationState["socketStatus"]) => void;
   setSelectedSensorId: (sensorId: SimulationState["selectedSensorId"]) => void;
+  resetEpoch: number;
   reset: () => void;
 }
 
@@ -56,5 +57,10 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   setStreamEnabled: (streamEnabled) => set({ streamEnabled }),
   setSocketStatus: (socketStatus) => set({ socketStatus }),
   setSelectedSensorId: (selectedSensorId) => set({ selectedSensorId }),
-  reset: () => set(initialState),
+  resetEpoch: 0,
+  reset: () =>
+    set((state) => ({
+      ...initialState,
+      resetEpoch: state.resetEpoch + 1,
+    })),
 }));

@@ -12,6 +12,7 @@ import {
 } from "@/lib/simulation";
 import { useTrainAudioSource } from "@/lib/audioSource";
 import {
+  DEFAULT_SIMULATION_ID,
   buildMicrophoneAudioChunk,
   createSimulationSocket,
   type SimulationSocket,
@@ -26,6 +27,7 @@ export default function Home() {
   const isRunning = useSimulationStore((state) => state.isRunning);
   const sourceEnabled = useSimulationStore((state) => state.sourceEnabled);
   const streamEnabled = useSimulationStore((state) => state.streamEnabled);
+  const resetEpoch = useSimulationStore((state) => state.resetEpoch);
   const socketStatus = useSimulationStore((state) => state.socketStatus);
   const setSocketStatus = useSimulationStore((state) => state.setSocketStatus);
   const selectedSensorId = useSimulationStore((state) => state.selectedSensorId);
@@ -55,13 +57,34 @@ export default function Home() {
       return;
     }
 
-    const socket = createSimulationSocket({ onStatus: setSocketStatus });
+    sequenceRef.current = 0;
+    lastChunkTimeRef.current = -Infinity;
+    const socket = createSimulationSocket({
+      onStatus: setSocketStatus,
+      onOpen: () => {
+        sequenceRef.current = 0;
+        lastChunkTimeRef.current = -Infinity;
+        socketRef.current?.sendJson({
+          type: "simulation_reset",
+          simulation_id: DEFAULT_SIMULATION_ID,
+        });
+      },
+    });
     socketRef.current = socket;
     return () => {
       socket.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
   }, [setSocketStatus, streamEnabled]);
+
+  useEffect(() => {
+    sequenceRef.current = 0;
+    lastChunkTimeRef.current = -Infinity;
+    socketRef.current?.sendJson({
+      type: "simulation_reset",
+      simulation_id: DEFAULT_SIMULATION_ID,
+    });
+  }, [resetEpoch]);
 
   useEffect(() => {
     if (!streamEnabled || !isRunning || simulationTime - lastChunkTimeRef.current < 0.25) {
@@ -77,8 +100,9 @@ export default function Home() {
       noiseLevel,
       audioSource,
     });
-    sequenceRef.current += 1;
-    socketRef.current?.sendChunk(chunk);
+    if (socketRef.current?.sendChunk(chunk)) {
+      sequenceRef.current += 1;
+    }
   }, [
     isRunning,
     noiseLevel,

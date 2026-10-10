@@ -80,10 +80,15 @@ simulation-backend/
 │   ├── __init__.py
 │   ├── main.py          # FastAPI, ingestion WebSocket, orchestration
 │   ├── schemas.py       # typed input/output contracts
+│   ├── geometry.py      # locked mics, track, crossings, sample rate
 │   ├── denoise.py       # filter noisy chunks
 │   ├── localization.py  # delay estimation + rail-constrained position
-│   └── prediction.py    # tracking, crossing ETA, clearance window
+│   ├── prediction.py    # tracking, crossing ETA, clearance window
+│   ├── pipeline.py      # sequence checks, audio buffer, orchestration
+│   ├── publisher.py     # HTTP POST to user-backend
+│   └── settings.py
 ├── tests/
+│   ├── synthetic_audio.py
 │   └── test_pipeline.py
 ├── .env.example
 ├── .gitignore
@@ -92,9 +97,21 @@ simulation-backend/
 
 Start with `fastapi`, `uvicorn[standard]`, `numpy`, `scipy`, and `pydantic`; add `soundfile` where prerecorded WAV decoding happens and `scikit-learn`/`filterpy` only if actually needed. Don't introduce PyTorch, a model-training service, or a database in the simulation backend without a concrete reason.
 
-## Event contracts (proposed; agree on these before coding)
+## Event contracts
 
-Use a stable `simulation_id`, monotonically increasing `sequence`, and simulation-relative `simulation_time_s` in every message. Audio must be synchronized and sampled at the same sample rate. Coordinate frames and units must be explicit.
+Locked for the demo. The code source of truth is `simulation_backend/app/geometry.py`. Use a stable `simulation_id`, `sequence` increasing by exactly 1, and simulation-relative `simulation_time_s` in every message. Audio must be synchronized and sampled at the same sample rate. Coordinate frames and units must be explicit.
+
+**Locked demo scene**
+
+- Sample rate `16000` Hz, chunk duration `250` ms, **4000 float samples** per microphone.
+- The simulation frontend sends `audio_pcm16_base64` (little-endian PCM16) plus `z_m`. In that scene `y` is elevation and `z` is the other ground axis. A JSON `audio` float array with the offset in `y_m` is also accepted. Do not send both encodings in one microphone.
+- Microphones, 20 m north of the rail: `mic-1` (0 m, 20 m), `mic-2` (100 m, 20 m), `mic-3` (200 m, 20 m).
+- Rail is the line `y = 0`. Positive x is east. Speed of sound used by the localizer is 343 m/s.
+- Crossings: `crossing-001` at rail x = 50 m, `crossing-002` at rail x = 150 m.
+- Assumed consist length for blockage math is 180 m, centered on the acoustic fix. This is an assumption, not a measurement.
+- Rail x = 0 maps to latitude 34.0007, longitude -81.0348. Positive x moves east in longitude.
+- The backend localizes on a trailing 1 s buffer, so the first three 250 ms chunks of a run return `status: "unknown"`. The train is treated as fixed during that window. Motion that changes the delays inside the window smears the peak, and the fix is dropped instead of guessed.
+- `sequence` must be exactly the previous accepted sequence plus 1. Gaps and duplicates are rejected and do not advance state. `{"type":"simulation_reset","simulation_id":"..."}` clears that run.
 
 **Simulation -> simulation backend (WebSocket)**
 
@@ -107,14 +124,14 @@ Use a stable `simulation_id`, monotonically increasing `sequence`, and simulatio
   "sample_rate_hz": 16000,
   "duration_ms": 250,
   "microphones": [
-    {"id": "mic-1", "x_m": 0, "y_m": 20, "audio": "<placeholder>"},
-    {"id": "mic-2", "x_m": 100, "y_m": 20, "audio": "<placeholder>"},
-    {"id": "mic-3", "x_m": 200, "y_m": 20, "audio": "<placeholder>"}
+    {"id": "mic-1", "x_m": 0, "y_m": 20, "audio": [0.0, 0.01]},
+    {"id": "mic-2", "x_m": 100, "y_m": 20, "audio": [0.0, -0.02]},
+    {"id": "mic-3", "x_m": 200, "y_m": 20, "audio": [0.0, 0.03]}
   ]
 }
 ```
 
-`audio` is a **placeholder**, not a defined wire encoding. For first integration, use small JSON sample arrays; for streaming, agree on a binary framing protocol or base64-encoded PCM16 chunks. Never mix formats silently. The example's 250 ms at 16 kHz means **4,000 samples per microphone**, not a handful of values.
+`audio` arrays in the example are abbreviated. Each live chunk contains 4,000 samples per microphone. The simulation frontend sends those samples as `audio_pcm16_base64` and connects to `ws://localhost:8000/ws/simulation`.
 
 **Simulation backend -> user backend (HTTP POST `/api/predictions`)**
 
@@ -125,18 +142,21 @@ Use a stable `simulation_id`, monotonically increasing `sequence`, and simulatio
   "sequence": 42,
   "simulation_time_s": 10.5,
   "train_id": "train-001",
+  "status": "tracking",
   "estimated_position": {"latitude": 34.0007, "longitude": -81.0348},
   "estimated_speed_mps": 13.4,
   "direction": "eastbound",
   "crossings": [
     {"crossing_id": "crossing-001", "eta_seconds": 45,
-     "estimated_blockage_seconds": 120}
+     "estimated_blockage_seconds": 120, "status": "approaching"}
   ],
   "source": "simulated_audio_inference"
 }
 ```
 
-These numbers are illustrative, not actual detections. `eta_seconds` is relative to `simulation_time_s`, not wall time. If speed/location cannot be inferred, publish `unknown`/null with an explicit status instead of fabricating confidence. Only add confidence scores if calibrated or clearly defined.
+These numbers are illustrative, not actual detections. `eta_seconds` is relative to `simulation_time_s`, not wall time. `status` is `tracking` or `unknown`. Per-crossing `status` is `approaching`, `blocking`, `clear`, or `unknown`. While approaching, `estimated_blockage_seconds` is the full closure (assumed length / speed). While blocking, it is the remaining time until the rear clears. A stopped train publishes a near-zero speed and unknown crossing ETAs.
+
+If speed or location cannot be inferred, publish `unknown` and null speeds rather than a guessed value. A position may still be present when speed is null. The WebSocket reply to the simulation frontend adds `estimated_position_m` (rail axis) and `"label": "estimate"`. Those two fields are not included on the user-backend POST. Only add confidence scores if calibrated or clearly defined.
 
 **User backend -> user frontend (WebSocket)**
 - Forward current predictions and selected route/alerts, with `simulation_id`, `sequence`, and timestamp.
