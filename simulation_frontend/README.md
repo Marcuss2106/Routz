@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Routz — Simulation Frontend
+
+The simulation frontend is the 3D side of Routz's prototype architecture. It
+renders a train moving on a railroad track, three fixed virtual microphones,
+and the signal strength each microphone receives on the simulated ground
+plane.
+
+The browser loads `train.wav` through `/api/train-audio` when the repository
+asset is available. Each microphone then receives a separate PCM stream with
+modeled propagation delay, distance attenuation, and configurable noise. If no
+audio asset is available, the same pipeline uses a deterministic synthetic
+train signal so the scene remains usable.
+
+The optional **Stream** control sends synchronized JSON WebSocket chunks to
+`NEXT_PUBLIC_SIMULATION_WS_URL` (default: `ws://localhost:8000/ws/simulation`).
+The current GitHub simulation backend is still a scaffold, so streaming is
+off by default.
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The scene supports orbit
+controls, pause/run, speed, train direction, noise, source, waveform, and
+backend-stream toggles.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The main scene is composed from React Three Fiber, Drei, Zustand, and Tailwind
+CSS components under `src/components/simulation`.
