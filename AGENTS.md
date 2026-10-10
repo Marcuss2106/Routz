@@ -16,10 +16,10 @@ Keep the four existing top-level application folders. Do not merge services or i
 
 ```text
 routez/
-├── simulation-frontend/  # Next.js, TypeScript, React Three Fiber, Drei, Zustand
-├── simulation-backend/   # Python, FastAPI, NumPy, SciPy, optional scikit-learn/FilterPy
-├── user-frontend/        # Next.js, TypeScript, Google Maps, ElevenLabs
-├── user-backend/         # FastAPI (preferred if Python already in use) or Node.js
+├── simulation_frontend/  # Next.js, TypeScript, React Three Fiber, Drei, Zustand
+├── simulation_backend/   # Python, FastAPI, NumPy, SciPy, optional scikit-learn/FilterPy
+├── frontend/             # user-facing Next.js map, Google Maps, voice playback
+├── backend/              # user backend: prediction ingest, alerts, ElevenLabs
 └── AGENTS.md
 ```
 
@@ -41,19 +41,20 @@ routez/
 - Keep signal processing in memory; avoid saving each sample to PostgreSQL.
 - Train sound is an extended source; a single moving point source is an acknowledged simulation simplification. A prerecorded sound is not evidence of real-world localization accuracy.
 
-**user-backend**
+**user-backend (`backend/`)**
 - Accept and validate prediction events from simulation-backend; reject duplicates and stale/out-of-order updates.
 - Own PostgreSQL access, persistent crossings, recent predictions, and optional run history. Use one Vultr-hosted PostgreSQL instance; neither browser frontend gets database credentials.
 - Retrieve candidate road routes from Google Maps Routes API; overlay known rail crossings and predicted blockage intervals; evaluate each candidate at its expected crossing arrival time.
 - Choose the best **available candidate** by estimated total travel time, accounting for wait time or detours. Google Routes API does not directly support arbitrary predicted crossing closures; alternatives may need explicit waypoints or a different routing engine.
 - Broadcast current crossing predictions, route recommendations, and alerts to user-frontend via WebSocket.
+- Compose the spoken sentence on the server. `GET /api/speech/{alert_id}` looks up that sentence, asks ElevenLabs for audio, and caches the bytes by alert id. The browser never sends text to speak. If `ELEVENLABS_API_KEY` is unset, skip synthesis and still broadcast the alert text.
 - Never claim to optimize emergency response using standard traffic ETAs without explaining that ambulance behavior and traffic preemption are not modeled.
 
-**user-frontend**
+**user-frontend (`frontend/`)**
 - Mobile-friendly Next.js map view, demonstrated in iPhone Safari.
-- With permission, use browser geolocation to display the ambulance's current location; permit simulated ambulance movement for demos.
+- With permission, use browser geolocation to display the ambulance's current location. Ask for that fix on the Say route tap. If the browser has no fix, start from a simulated point at Swearingen Engineering Center (301 Main St, Columbia) and label it simulated.
 - Display route candidates, rail crossings, predicted closure/clearance windows, selected route, and simulated ETA impact.
-- Receive real-time events from user-backend. Use ElevenLabs to speak concise alerts/directions (e.g. predicted closure and suggested reroute); voice is optional and must not block routing.
+- Receive real-time events from user-backend. A Voice toggle plays concise simulated alerts (predicted closure or clearance) by requesting `GET /api/speech/{alert_id}`. Say route records a short request, the user backend transcribes it, and the map draws that driving route and speaks the result. The tap unlocks audio for iPhone Safari. Voice is optional and must not block routing. Speak a crossing line only when its alert id changes.
 - Mark the entire experience **SIMULATION / NOT FOR EMERGENCY USE**.
 
 ## End-to-end data flow
@@ -186,10 +187,10 @@ Keep optional ground truth in a separate evaluation-only dataset. Never expose P
 Create local files by copying the relevant template, then fill in actual values:
 
 ```bash
-cp simulation-frontend/.env.example simulation-frontend/.env.local
-cp simulation-backend/.env.example simulation-backend/.env
-cp user-frontend/.env.example user-frontend/.env.local
-cp user-backend/.env.example user-backend/.env
+cp simulation_frontend/.env.example simulation_frontend/.env.local
+cp simulation_backend/.env.example simulation_backend/.env
+cp frontend/.env.example frontend/.env.local
+cp backend/.env.example backend/.env
 ```
 
 **Suggested templates (adapt as implementation evolves):**
@@ -209,27 +210,26 @@ INTERNAL_API_TOKEN=replace-with-shared-private-token
 AUDIO_SAMPLE_RATE_HZ=16000
 ```
 
-`user-frontend/.env.example` (Next.js):
+`frontend/.env.example` (the user-facing Next.js map):
 
 ```dotenv
 NEXT_PUBLIC_USER_API_URL=http://localhost:8001
 NEXT_PUBLIC_USER_WS_URL=ws://localhost:8001/ws/updates
-NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY=replace-with-browser-restricted-key
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=replace-with-browser-restricted-key
 ```
 
-`user-backend/.env.example` (server-side; Python/FastAPI or equivalent):
+`backend/.env.example` (the user backend; Python/FastAPI):
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://username:password@localhost:5432/routez
+USER_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
 INTERNAL_API_TOKEN=replace-with-shared-private-token
-GOOGLE_MAPS_SERVER_API_KEY=replace-with-server-side-key
 ELEVENLABS_API_KEY=replace-with-private-key-if-generated-server-side
-USER_ALLOWED_ORIGINS=http://localhost:3001
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
-- **These are proposed variable names and endpoints, not existing implementations.** Change templates when actual code or port assignments differ. Example local ports assume simulation frontend `3000`, user frontend `3001`, simulation backend `8000`, user backend `8001`.
+- The speech path is implemented: the map in `frontend/` plays audio from `backend/` on port `8001`. Change templates when ports differ. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the backend.
 - Next.js exposes **all `NEXT_PUBLIC_*` variables to the browser**. Only use that prefix for intentionally public configuration. Google Maps browser keys are not secrets: restrict them by HTTP referrer and API; keep Google Routes server keys private and restrict them separately.
-- If ElevenLabs is called from the user backend, keep its key there. Never place a secret ElevenLabs key in a browser-exposed variable; use a backend endpoint or approved short-lived token mechanism for browser voice interactions.
+- ElevenLabs is called from `backend/`. The key stays in `ELEVENLABS_API_KEY`. The map only requests `GET /api/speech/{alert_id}` and plays the audio. `ELEVENLABS_VOICE_ID` defaults to the public Rachel voice when unset. PostgreSQL and the Google server key are not read by this speech service yet.
 - The same `INTERNAL_API_TOKEN` value must be configured in both Python simulation backend and user backend. Authenticate prediction ingestion (e.g., `Authorization: Bearer <token>`) and use TLS/HTTPS in deployment. Do not put this token in either frontend.
 - For Vultr PostgreSQL, use the actual connection string and required TLS settings from the provider. Restrict database network access to the user backend. Avoid logging connection URLs or credentials.
 - Use `python-dotenv` or `pydantic-settings` in Python as needed; Next.js automatically reads `.env.local`. Validate required server variables on startup and fail clearly when missing.

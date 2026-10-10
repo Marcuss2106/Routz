@@ -29,6 +29,11 @@ export interface PlaceResult {
    * than re-typing a name or address string).
    */
   placeRef?: any;
+  /**
+   * Address string for the Routes API. Spoken routes use this when Places
+   * and Geocoding are unavailable, so the name never has to be geocoded first.
+   */
+  addressQuery?: string;
 }
 
 export interface RouteInfo {
@@ -155,6 +160,76 @@ export function loadGoogleMaps(apiKey?: string): Promise<any> {
   return loadPromise;
 }
 
+const DEMO_BIAS = {
+  center: { lat: DEFAULT_CENTER.latitude, lng: DEFAULT_CENTER.longitude },
+  radius: 40000,
+};
+
+async function placesNamespace(maps: any): Promise<any> {
+  if (typeof maps.importLibrary === "function") {
+    try {
+      return await maps.importLibrary("places");
+    } catch {
+      // The script may already have loaded the places library.
+    }
+  }
+  return maps.places;
+}
+
+async function geocodePlaces(maps: any, query: string): Promise<PlaceResult[]> {
+  if (typeof maps.importLibrary === "function") {
+    try {
+      await maps.importLibrary("geocoding");
+    } catch {
+      // Geocoder may already be on the maps namespace.
+    }
+  }
+  return new Promise((resolve) => {
+    if (typeof maps.Geocoder !== "function") {
+      resolve([]);
+      return;
+    }
+    const geocoder = new maps.Geocoder();
+    geocoder.geocode(
+      {
+        address: query,
+        componentRestrictions: { country: "US" },
+        bounds: {
+          south: DEFAULT_CENTER.latitude - 0.45,
+          west: DEFAULT_CENTER.longitude - 0.45,
+          north: DEFAULT_CENTER.latitude + 0.45,
+          east: DEFAULT_CENTER.longitude + 0.45,
+        },
+      },
+      (results: any, status: string) => {
+        if (status !== "OK" || !Array.isArray(results)) {
+          resolve([]);
+          return;
+        }
+        resolve(
+          results.slice(0, 5).flatMap((result: any, index: number): PlaceResult[] => {
+            const location = result.geometry?.location;
+            const lat = typeof location?.lat === "function" ? location.lat() : location?.lat;
+            const lng = typeof location?.lng === "function" ? location.lng() : location?.lng;
+            if (typeof lat !== "number" || typeof lng !== "number") return [];
+            const formattedAddress = asText(result.formatted_address) ?? query;
+            const placeId = asText(result.place_id);
+            return [
+              {
+                id: placeId ?? `geo-${lat.toFixed(5)}-${lng.toFixed(5)}-${index}`,
+                name: formattedAddress.split(",")[0] || query,
+                formattedAddress,
+                coordinate: { latitude: lat, longitude: lng },
+                ...(placeId ? { placeId } : {}),
+              },
+            ];
+          })
+        );
+      }
+    );
+  });
+}
+
 /** Place autocomplete via the Places API (New), with coordinates resolved. */
 export async function searchPlaces(query: string): Promise<PlaceResult[]> {
   const trimmed = query.trim();
@@ -162,14 +237,24 @@ export async function searchPlaces(query: string): Promise<PlaceResult[]> {
 
   const maps = await loadGoogleMaps();
   try {
-    const fetchSuggestions =
-      maps.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions;
-    if (typeof fetchSuggestions !== "function") return [];
+    const places = await placesNamespace(maps);
+    const fetchSuggestions = places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions;
+    if (typeof fetchSuggestions !== "function") return geocodePlaces(maps, trimmed);
 
-    const response = await fetchSuggestions.call(
-      maps.places.AutocompleteSuggestion,
-      { input: trimmed }
-    );
+    const biased = {
+      input: trimmed,
+      includedRegionCodes: ["us"],
+      origin: DEMO_BIAS.center,
+      locationBias: DEMO_BIAS,
+    };
+    let response: any;
+    try {
+      response = await fetchSuggestions.call(places.AutocompleteSuggestion, biased);
+    } catch {
+      response = await fetchSuggestions.call(places.AutocompleteSuggestion, {
+        input: trimmed,
+      });
+    }
     const suggestions: any[] = response?.suggestions ?? [];
 
     const settled = await Promise.allSettled(
@@ -220,11 +305,13 @@ export async function searchPlaces(query: string): Promise<PlaceResult[]> {
       })
     );
 
-    return settled
+    const placesFound = settled
       .map((r) => (r.status === "fulfilled" ? r.value : null))
       .filter((p): p is PlaceResult => p !== null);
+    if (placesFound.length > 0) return placesFound;
+    return geocodePlaces(maps, trimmed);
   } catch {
-    return [];
+    return geocodePlaces(maps, trimmed);
   }
 }
 
@@ -389,6 +476,8 @@ export async function getDrivingRoute(
     durationToSeconds(route.duration) ??
     durationToSeconds(route.staticDuration) ??
     sumNumbers(legs.map((leg) => durationToSeconds(leg.duration))) ??
+    millisToSeconds(route.durationMillis) ??
+    sumNumbers(legs.map((leg) => millisToSeconds(leg.durationMillis))) ??
     0;
 
   return {
@@ -408,11 +497,12 @@ function toFiniteNumber(value: any): number | null {
 
 /**
  * The JS Routes library accepts Place instances, LatLngs, or address
- * strings as waypoints. Prefer the exact Place; fall back to coordinates
- * (current location, mock places).
+ * strings as waypoints. Prefer the exact Place, then a spoken address
+ * string, then coordinates (current location, mock places).
  */
 function toWaypoint(place: PlaceResult, maps: any): any {
   if (place.placeRef) return place.placeRef;
+  if (place.addressQuery) return place.addressQuery;
   return toCoordinateWaypoint(place, maps);
 }
 
@@ -574,6 +664,13 @@ function sumNumbers(values: (number | null)[]): number | null {
     }
   }
   return found ? total : null;
+}
+
+/** Some Routes JS responses report duration only as milliseconds. */
+function millisToSeconds(value: any): number | null {
+  const millis = toFiniteNumber(value);
+  if (millis === null || millis <= 0) return null;
+  return millis / 1000;
 }
 
 /** Routes API durations look like "831s" (string); be liberal in parsing. */

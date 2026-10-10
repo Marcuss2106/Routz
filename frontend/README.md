@@ -90,9 +90,21 @@ When an input is focused but empty, the app shows a few mock Columbia, SC sugges
 - **"Google Maps rejected this API key"** — check that billing is enabled, all four APIs are enabled, and your HTTP-referrer restrictions include the exact URL you're visiting (scheme + host + port).
 - **Search returns nothing** — confirm **Places API (New)** is enabled on the project.
 - **No route found / legacy API error** — confirm **Routes API** (not the legacy Directions API) is enabled on the project, and try more specific addresses.
-- **Geolocation fails** — location requires HTTPS (or `localhost`) plus browser permission.
+- **Geolocation fails** — location requires HTTPS (or `localhost`) plus browser permission. Say route and Use my location then use a simulated start at Swearingen Engineering Center.
+
+## Simulated voice guidance
+
+Optional. Route search still runs in the browser if the voice backend is down.
+
+1. Copy `backend/.env.example` to `backend/.env` and set `ELEVENLABS_API_KEY` (and the same `INTERNAL_API_TOKEN` the simulation backend uses).
+2. From `backend/`, run `uv run backend`.
+3. Tap **Voice** in the map header. That tap unlocks audio and speaks a short simulated line. Later crossing alerts are spoken only when a new alert arrives.
+4. Tap **Say route**, then say a start and a destination, such as “from Main Street to the hospital.” Tap **Listening** to send it, or wait eight seconds. The map draws that driving route and speaks the time and distance. “Take me to …” starts from the browser’s location. If that fix is unavailable, the start is a simulated point at Swearingen Engineering Center, 301 Main St, Columbia, SC.
+
+The page is labeled **SIMULATION / NOT FOR EMERGENCY USE**.
 
 ## Notes
 
-- No backend in v1 — everything runs client-side via the Maps JavaScript API.
+- Driving routes are still requested from Google in the browser.
+- Spoken alerts come from `backend/` (`GET /api/speech/{alert_id}`). The ElevenLabs key stays there.
 - Watch usage in **Google Cloud Console → Billing**; set budget alerts if you share the app publicly.

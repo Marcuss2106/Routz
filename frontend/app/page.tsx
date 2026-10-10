@@ -5,14 +5,60 @@ import GoogleMap from "@/components/GoogleMap";
 import RouteForm from "@/components/RouteForm";
 import RouteSummary from "@/components/RouteSummary";
 import {
+  useVoiceGuidance,
+  VoiceAlert,
+  VoiceButton,
+  VoiceProvider,
+} from "@/components/VoiceGuidance";
+import VoiceRouteButton from "@/components/VoiceRouteButton";
+import {
+  DEFAULT_CENTER,
   getDrivingRoute,
   getGoogleMapsApiKey,
   reverseGeocode,
   type PlaceResult,
   type RouteInfo,
 } from "@/lib/googleMaps";
+import { readCurrentLocation } from "@/lib/here";
+import { registerRouteSpeech, type RouteTranscript } from "@/lib/voice";
+
+/** Bias a spoken name to the demo city so Routes can resolve it as an address. */
+function spokenPlace(query: string): PlaceResult | null {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return null;
+  const withoutArticle = trimmed.replace(/^(the|a|an)\s+/i, "");
+  const address = /columbia|,\s*sc\b|south carolina/i.test(withoutArticle)
+    ? withoutArticle
+    : `${withoutArticle}, Columbia, SC`;
+  return {
+    id: `spoken-${address.toLowerCase()}`,
+    name: trimmed,
+    formattedAddress: address,
+    coordinate: { ...DEFAULT_CENTER },
+    addressQuery: address,
+  };
+}
+
+/** Demo start when the browser cannot provide a GPS fix. */
+function simulatedHere(): PlaceResult {
+  return {
+    id: `simulated-here-${Date.now()}`,
+    name: "Swearingen Engineering Center",
+    formattedAddress: "Simulated start, 301 Main St, Columbia, SC",
+    coordinate: { latitude: 33.98924, longitude: -81.02982 },
+  };
+}
 
 export default function Home() {
+  return (
+    <VoiceProvider>
+      <MapScreen />
+    </VoiceProvider>
+  );
+}
+
+function MapScreen() {
+  const voice = useVoiceGuidance();
   const [origin, setOrigin] = useState<PlaceResult | null>(null);
   const [destination, setDestination] = useState<PlaceResult | null>(null);
   const [route, setRoute] = useState<RouteInfo | null>(null);
@@ -20,74 +66,116 @@ export default function Home() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
 
-  const handleGetRoute = useCallback(async () => {
+  const locate = useCallback(async (): Promise<PlaceResult> => {
+    setIsLocating(true);
     setRouteError(null);
+    const fix = await readCurrentLocation();
+    if (!fix) {
+      setIsLocating(false);
+      return simulatedHere();
+    }
+    let address = `${fix.latitude.toFixed(5)}, ${fix.longitude.toFixed(5)}`;
+    let placeId: string | undefined;
+    try {
+      const resolved = await reverseGeocode(fix.latitude, fix.longitude);
+      address = resolved.address;
+      placeId = resolved.placeId;
+    } catch {
+      // Coordinates are enough to route when reverse geocoding is off.
+    }
+    setIsLocating(false);
+    return {
+      id: `current-${Date.now()}`,
+      name: "Current location",
+      formattedAddress: address,
+      coordinate: fix,
+      ...(placeId ? { placeId } : {}),
+    };
+  }, []);
 
+  const calculateRoute = useCallback(
+    async (from: PlaceResult, to: PlaceResult, speakResult: boolean) => {
+      setRouteError(null);
+      if (!getGoogleMapsApiKey()) {
+        setRouteError(
+          "Missing Google Maps API key. Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to frontend/.env.local — see README for setup."
+        );
+        return;
+      }
+      setRouteLoading(true);
+      setRoute(null);
+      try {
+        const result = await getDrivingRoute(from, to);
+        const start = result.path[0];
+        const end = result.path[result.path.length - 1];
+        const snappedFrom =
+          from.addressQuery && start ? { ...from, coordinate: start } : from;
+        const snappedTo =
+          to.addressQuery && end ? { ...to, coordinate: end } : to;
+        if (snappedFrom !== from) setOrigin(snappedFrom);
+        if (snappedTo !== to) setDestination(snappedTo);
+        setRoute(result);
+        if (speakResult || voice.enabled) {
+          try {
+            const alert = await registerRouteSpeech({
+              origin_name: snappedFrom.name,
+              destination_name: snappedTo.name,
+              duration_seconds: result.expectedTravelTimeSeconds,
+              distance_meters: result.distanceMeters,
+            });
+            voice.speak(alert);
+          } catch {
+            // The drawn route does not depend on speech.
+          }
+        }
+      } catch (err) {
+        setRouteError(
+          err instanceof Error ? err.message : "Could not calculate a route."
+        );
+      } finally {
+        setRouteLoading(false);
+      }
+    },
+    [voice]
+  );
+
+  const handleGetRoute = useCallback(async () => {
     if (!origin || !destination) {
       setRouteError("Enter both a starting location and a destination.");
       return;
     }
-    if (!getGoogleMapsApiKey()) {
-      setRouteError(
-        "Missing Google Maps API key. Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to frontend/.env.local — see README for setup."
-      );
-      return;
-    }
+    await calculateRoute(origin, destination, false);
+  }, [origin, destination, calculateRoute]);
 
-    setRouteLoading(true);
-    setRoute(null);
-    try {
-      const result = await getDrivingRoute(origin, destination);
-      setRoute(result);
-    } catch (err) {
-      setRouteError(
-        err instanceof Error ? err.message : "Could not calculate a route."
-      );
-    } finally {
-      setRouteLoading(false);
-    }
-  }, [origin, destination]);
+  const handleSpokenRoute = useCallback(
+    async (request: RouteTranscript) => {
+      const destinationQuery = request.destination_query;
+      if (!destinationQuery) return;
+      const nextOrigin = request.use_current_location
+        ? await locate()
+        : spokenPlace(request.origin_query ?? "");
+      const nextDestination = spokenPlace(destinationQuery);
+      if (!nextDestination) {
+        setRouteError(`Could not find ${destinationQuery}. Try a more specific name.`);
+        return;
+      }
+      if (!nextOrigin) {
+        setRouteError(`Could not find ${request.origin_query ?? "the start"}. Try a more specific name.`);
+        return;
+      }
+      setOrigin(nextOrigin);
+      setDestination(nextDestination);
+      await calculateRoute(nextOrigin, nextDestination, true);
+    },
+    [locate, calculateRoute]
+  );
 
   const handleUseMyLocation = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setRouteError("Geolocation is not supported on this device.");
-      return;
-    }
-    setIsLocating(true);
-    setRouteError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        let label = "Current location";
-        let address = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-        let placeId: string | undefined;
-        try {
-          const resolved = await reverseGeocode(latitude, longitude);
-          address = resolved.address;
-          placeId = resolved.placeId;
-          label = "Current location";
-        } catch {
-          // Keep coordinate fallback — still routable.
-        }
-        setOrigin({
-          id: `current-${Date.now()}`,
-          name: label,
-          formattedAddress: address,
-          coordinate: { latitude, longitude },
-          ...(placeId ? { placeId } : {}),
-        });
-        setIsLocating(false);
-      },
-      () => {
-        setIsLocating(false);
-        setRouteError(
-          "Could not get your location. Check browser permissions and try again."
-        );
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-    );
-  }, []);
+    void locate().then((place) => {
+      setOrigin(place);
+      setRoute(null);
+    });
+  }, [locate]);
 
   const handleClearRoute = useCallback(() => {
     setRoute(null);
@@ -108,7 +196,7 @@ export default function Home() {
 
       {/* Top: brand + search */}
       <div className="pointer-events-none relative z-10 mx-auto flex w-full max-w-md flex-col gap-2.5 p-3 pb-0 sm:max-w-lg">
-        <header className="pointer-events-auto flex items-center justify-between rounded-2xl bg-white/95 px-4 py-2.5 shadow-[0_8px_30px_rgba(11,27,51,0.12)] backdrop-blur">
+        <header className="pointer-events-auto flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white/95 px-4 py-2.5 shadow-[0_8px_30px_rgba(11,27,51,0.12)] backdrop-blur">
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#007AFF] text-white shadow-[0_4px_12px_rgba(0,122,255,0.4)]">
               <svg
@@ -135,10 +223,19 @@ export default function Home() {
               </span>
             </span>
           </div>
-          <span className="rounded-full bg-[#F2F4F8] px-2.5 py-1 text-[12px] font-semibold text-[#0B1B33]/60">
-            v1
-          </span>
+          <div className="flex items-center gap-2">
+            <VoiceRouteButton
+              disabled={routeLoading}
+              onRequest={handleSpokenRoute}
+            />
+            <VoiceButton />
+            <span className="rounded-full bg-[#F2F4F8] px-2.5 py-1 text-[12px] font-semibold text-[#0B1B33]/60">
+              v1
+            </span>
+          </div>
         </header>
+
+        <VoiceAlert />
 
         <div className="pointer-events-auto">
           <RouteForm
@@ -217,7 +314,7 @@ export default function Home() {
                 <span className="font-semibold text-[#0B1B33]">
                   Plan your drive.
                 </span>{" "}
-                Enter a start and destination to see your driving route.
+                Enter a start and destination, or tap Say route and speak both places.
               </p>
             </div>
           )
