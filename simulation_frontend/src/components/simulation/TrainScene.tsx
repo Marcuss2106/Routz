@@ -9,6 +9,7 @@ import { Railroad } from "./Railroad";
 import { Train } from "./Train";
 import { Microphone } from "./Microphone";
 import { SoundWaves } from "./SoundWaves";
+import { CrossingMarkers, RoadLayer } from "./Roads";
 import { getAudioSensors, sensorScenePosition, VISUAL_EXAGGERATION } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
 
@@ -87,13 +88,20 @@ export default function TrainScene() {
   const sensors = useMemo(() => getAudioSensors(railroad.route.length_m), [railroad.route.length_m]);
   return (
     <div className="canvas-wrap">
-      <Canvas shadows camera={{ position: INITIAL_CAMERA_POSITION.toArray(), fov: 38, near: 1, far: 100000 }} dpr={[1, 1.5]}>
+      <Canvas
+        shadows
+        gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+        camera={{ position: INITIAL_CAMERA_POSITION.toArray(), fov: 38, near: 5, far: 60000 }}
+        dpr={[1, 2]}
+      >
         <color attach="background" args={["#d8d7c7"]} />
         <fog attach="fog" args={["#d8d7c7", 22000, 48000]} />
         <ambientLight intensity={1.25} />
         <directionalLight castShadow position={[-9000, 16000, 7000]} intensity={2.2} color="#fff5d8" shadow-mapSize={[2048, 2048]} shadow-camera-far={45000} shadow-camera-left={-18000} shadow-camera-right={18000} shadow-camera-top={18000} shadow-camera-bottom={-18000} />
         <mesh rotation-x={-Math.PI / 2} receiveShadow position-y={-1}><circleGeometry args={[17400, 96]} /><meshStandardMaterial color="#b9c0a5" roughness={1} /></mesh>
+        <RoadLayer roads={railroad.roads ?? []} />
         <Railroad lines={railroad.network} route={railroad.route.points} />
+        <CrossingMarkers crossings={railroad.crossings ?? []} />
         <SoundWaves route={railroad.route.points} />
         <Train route={railroad.route.points} />
         {sensors.map((sensor) => {

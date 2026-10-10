@@ -7,6 +7,30 @@ export interface RailLine {
   points: ScenePoint[];
 }
 
+export interface RoadLine {
+  id: string;
+  name: string | null;
+  ref: string | null;
+  class: string;
+  category: "major" | "medium" | "local";
+  ground_level: boolean;
+  elevation_m: number;
+  points: ScenePoint[];
+}
+
+export interface RailCrossing {
+  id: string;
+  name: string;
+  road_class: string;
+  position: ScenePoint;
+  longitude: number;
+  latitude: number;
+  rotation_y_rad: number;
+  signals: string | null;
+  barrier: string | null;
+  source: string;
+}
+
 export interface RailroadPayload {
   source: { source: string; retrieved: string; source_updated: string; radius_m: number; feature_count: number };
   coordinate_system: {
@@ -19,6 +43,9 @@ export interface RailroadPayload {
   };
   topology: { join_tolerance_m: number; policy: string };
   network: RailLine[];
+  road_source: { source: string; attribution: string; retrieved: string; radius_m: number; feature_count: number };
+  roads: RoadLine[];
+  crossings: RailCrossing[];
   route: { id: string; length_m: number; source_edge_ids: string[]; selection: string; points: ScenePoint[] };
 }
 

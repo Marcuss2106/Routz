@@ -22,6 +22,10 @@ class Settings:
     data_path: Path = Path(
         os.getenv("RAIL_DATA_PATH", str(PACKAGE_DIR / "data" / "railroads_columbia.geojson"))
     )
+    road_radius_m: float = float(os.getenv("ROAD_RADIUS_M", "5000"))
+    road_data_path: Path = Path(
+        os.getenv("ROAD_DATA_PATH", str(PACKAGE_DIR / "data" / "roads_columbia.geojson"))
+    )
 
 
 settings = Settings()

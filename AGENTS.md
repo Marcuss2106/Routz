@@ -26,7 +26,7 @@ routez/
 ### Ownership and responsibilities
 
 **simulation-frontend**
-- Render railroad track, moving train, three microphones, crossing, and optional sound-wave visualization.
+- Render railroad track, the cached road layer, verified ground-level crossings, moving train, three microphones, and optional sound-wave visualization.
 - Provide play/pause/reset, speed, direction, noise level, and train-length controls.
 - Use one prerecorded `train.wav` as the common source for three **distinct** virtual microphone streams; model per-microphone sound propagation delay, attenuation, and added noise.
 - Send timestamped, synchronized audio chunks and microphone coordinates to the simulation backend. Do not send ground-truth position/speed to inference endpoints.
@@ -34,7 +34,7 @@ routez/
 - A single simulation clock is essential. `backend/` owns the authoritative clock, route distance, and train state; `simulation-frontend` interpolates snapshots for rendering and derives synchronized sensor chunks from that clock for `simulation_backend`.
 
 **backend (railroad simulation service)**
-- FastAPI service for cached SCDOT railroad geometry, graph/route selection, coordinate conversion, and shared authoritative train motion.
+- FastAPI service for cached SCDOT railroad geometry, cached OpenStreetMap roads and declared level crossings, graph/route selection, shared coordinate conversion, and authoritative train motion.
 - Publishes geometry over HTTP and state at about 10 Hz over WebSocket, accepting play/pause/restart/playback-speed commands from any client.
 - This service runs on port 8000. `simulation_backend` runs on port 8001 and consumes its clock indirectly through timestamped frontend audio chunks.
 

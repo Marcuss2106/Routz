@@ -118,7 +118,7 @@ export default function SimulationApp() {
       {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span></div>}
       {railroad && <TrainScene />}
       <SimulationControls socketRef={socketRef} />
-      <footer className="source-note">Real SCDOT geometry · Simulation, not for emergency use</footer>
+      <footer className="source-note">SCDOT rail · © OpenStreetMap contributors · Simulation, not for emergency use</footer>
     </main>
   );
 }

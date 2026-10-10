@@ -1,8 +1,11 @@
 import asyncio
 import math
 
+from shapely.geometry import LineString, Point
+
 from backend.config import settings
 from backend.coordinates import CoordinateSystem
+from backend.geographic_layers import GeographicLayers
 from backend.rail_network import RailNetwork
 from backend.simulation import TrainSimulation
 
@@ -30,6 +33,21 @@ def test_route_is_continuous_and_substantial():
         assert set((network.edges[left].start, network.edges[left].end)) & set(
             (network.edges[right].start, network.edges[right].end)
         )
+
+
+def test_roads_and_declared_ground_crossings_share_scene_coordinates():
+    coordinates, network = make_network()
+    layers = GeographicLayers(settings.road_data_path, coordinates, network)
+    assert len(layers.roads) > 1000
+    assert len(layers.crossings) > 10
+    rail_lines = [
+        LineString([coordinates.utm_to_scene(*point)[::2] for point in edge.points])
+        for edge in network.edges.values()
+    ]
+    for crossing in layers.crossings:
+        x, _, z = crossing["position"]
+        assert min(line.distance(Point(x, z)) for line in rail_lines) < 0.01
+        assert crossing["source"] == "OpenStreetMap railway=level_crossing"
 
 
 def test_play_pause_restart_and_completion():

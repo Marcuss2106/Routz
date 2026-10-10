@@ -6,12 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .coordinates import CoordinateSystem
+from .geographic_layers import GeographicLayers
 from .rail_network import RailNetwork
 from .simulation import TrainSimulation
 
 
 coordinates = CoordinateSystem(settings.center_lat, settings.center_lon)
 network = RailNetwork(settings.data_path, coordinates)
+geographic_layers = GeographicLayers(settings.road_data_path, coordinates, network)
 simulation = TrainSimulation(network, settings.base_speed_mps)
 
 
@@ -42,12 +44,18 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "data_loaded": True, "route_length_m": network.route_length_m}
+    return {
+        "status": "ok",
+        "data_loaded": True,
+        "route_length_m": network.route_length_m,
+        "road_count": len(geographic_layers.roads),
+        "ground_crossing_count": len(geographic_layers.crossings),
+    }
 
 
 @app.get("/api/railroad")
 async def railroad() -> dict:
-    return network.payload()
+    return {**network.payload(), **geographic_layers.payload()}
 
 
 @app.get("/api/train")
