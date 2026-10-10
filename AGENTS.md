@@ -175,6 +175,35 @@ These numbers are illustrative, not actual detections. `speed_mps` is nonnegativ
 
 If speed or location cannot be inferred, publish `unknown` and null values rather than a guessed value. Every estimate includes confidence and uncertainty for position, speed, length, and direction. The `source` is explicitly `acoustic_array` and the `label` is `simulated_acoustic_estimate`.
 
+**Train observation -> user app (current integration format, Oct 2026)**
+
+The inference team delivers compact train-state observations (wall-clock UTC) instead of the earlier `simulation_time_s` envelope for the user-app vertical slice. The user app derives per-road blockage windows client-side (see `frontend/lib/trains.ts`) until the user-backend prediction service lands.
+
+```json
+{
+  "trainId": "train-001",
+  "observedAt": "2026-10-10T20:45:00Z",
+  "lat": 34.0007,
+  "lon": -81.0348,
+  "speedMps": 10,
+  "lengthM": 1200,
+  "degFromEast": 90,
+  "positionReference": "front"
+}
+```
+
+- `degFromEast`: math convention, counter-clockwise from east: `0` = east, `90` = north, `180` = west, `270` = south.
+- `positionReference`: `front` | `center` | `rear` — which point of the train `lat`/`lon` refers to.
+- `observedAt`: ISO-8601 UTC wall clock. Stale observations (>~90 s) must be flagged; do not silently treat old positions as current.
+- Prediction model (MVP): straight-line constant-velocity motion along `degFromEast`; train occupies `[front - lengthM, front]`; per-crossing `blockStartUtc`/`blockEndUtc` = front-ETA / rear-clear + buffer. Crossings outside a ~120 m corridor or beyond a 15-min horizon are skipped. See `frontend/lib/routeCrossing.ts` for route-conflict scoring (route within ~45 m of a crossing + driver ETA overlapping the block window = conflict; pick the candidate with lowest travel + wait).
+- Crossings are **real FRA inventory data** (Form 71, SOUTH CAROLINA / COLUMBIA, public at-grade open, Norfolk Southern, with DOT IDs) curated to two corridors in `frontend/lib/crossings.ts` and mirrored in `backend/src/backend/crossings.py`. Predictions derived from them are still simulated.
+- `degFromEast` convention confirmed (Oct 2026): math CCW from east, 0=E/90=N/180=W/270=S.
+
+**User backend slice (implemented Oct 2026, `backend/`)**
+- FastAPI + SSE (not WebSocket): `POST /api/train-observations` (ingest, compute, broadcast), `GET /api/predictions` (reconnect snapshot), `GET /api/crossings`, `GET /api/events` (SSE `predictions` events + `: heartbeat`), `GET /health`.
+- In-memory state (latest observation/predictions + fan-out); Postgres persistence is still a later step. Optional `INTERNAL_API_TOKEN` bearer auth on POST; open when unset (local demo).
+- Frontend links via `NEXT_PUBLIC_ROUTZ_API_URL` (`frontend/lib/trainStream.ts`): POSTs from the Train panel, subscribes with `EventSource`, falls back to identical local math when the backend is unreachable. Run backend on `:8001`, then restart Next dev.
+
 **User backend -> user frontend (WebSocket)**
 - Forward current predictions and selected route/alerts, with `simulation_id`, `sequence`, and timestamp.
 - Reconnect and load latest state via HTTP GET if the socket drops.

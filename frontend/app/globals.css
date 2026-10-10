@@ -36,6 +36,21 @@ input {
   max-width: none;
 }
 
+@keyframes sheet-swap {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.sheet-swap {
+  animation: sheet-swap 220ms ease-out;
+}
+
 /* Thin, subtle scrollbars for suggestion lists. */
 *::-webkit-scrollbar {
   width: 6px;
