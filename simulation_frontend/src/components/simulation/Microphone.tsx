@@ -30,20 +30,20 @@ export function Microphone({
 
   return (
     <group ref={groupRef}>
-      <mesh position={[0, 0.14, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.48, 0.58, 0.22, 24]} />
-        <meshStandardMaterial
-          color={selected ? "#ffffff" : "#17243a"}
-          roughness={0.38}
-          metalness={0.7}
-        />
+      <mesh position={[0, 0.18, 0]} castShadow receiveShadow>
+        <boxGeometry args={[1.15, .36, 1.15]} />
+        <meshStandardMaterial color="#4b5149" roughness={0.72} metalness={0.2} />
       </mesh>
-      <mesh position={[0, 0.62, 0]} castShadow>
-        <cylinderGeometry args={[0.075, 0.11, 0.9, 16]} />
-        <meshStandardMaterial color={sensor.color} metalness={0.3} />
+      <mesh position={[0, 1.55, 0]} castShadow>
+        <cylinderGeometry args={[0.11, 0.15, 2.55, 12]} />
+        <meshStandardMaterial color="#626960" metalness={0.55} roughness={.42} />
       </mesh>
-      <mesh position={[0, 1.14, 0]} castShadow>
-        <sphereGeometry args={[0.18, 20, 20]} />
+      <mesh position={[0, 2.72, 0]} castShadow>
+        <boxGeometry args={[1.05, .78, .72]} />
+        <meshStandardMaterial color={selected ? "#eeeadd" : "#343c37"} roughness={.38} metalness={.35} />
+      </mesh>
+      <mesh position={[0, 2.74, .38]} castShadow rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[.23, .23, .16, 24]} />
         <meshStandardMaterial
           ref={beaconRef}
           color={sensor.color}
@@ -51,8 +51,12 @@ export function Microphone({
           emissiveIntensity={1.4}
         />
       </mesh>
-      <mesh position={[0, 0.27, 0]}>
-        <torusGeometry args={[selected ? 0.64 : 0.54, 0.025, 8, 40]} />
+      <mesh position={[0, 3.24, 0]}>
+        <sphereGeometry args={[.16, 18, 18]} />
+        <meshStandardMaterial color={sensor.color} emissive={sensor.color} emissiveIntensity={selected ? 2.6 : 1.2} />
+      </mesh>
+      <mesh position={[0, 0.38, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[selected ? .74 : .62, selected ? .82 : .7, 48]} />
         <meshBasicMaterial color={sensor.color} transparent opacity={0.8} />
       </mesh>
     </group>

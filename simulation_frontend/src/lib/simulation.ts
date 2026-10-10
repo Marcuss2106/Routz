@@ -1,185 +1,115 @@
-import type {
-  AudioSensor,
-  GroundPosition,
-  SensorReading,
-  TrainAudioSource,
-  TrainState,
-} from "@/types/simulation";
+import type { AudioSensor, ScenePoint, SensorReading, TrainAudioSource, TrainState } from "@/types/simulation";
 
-export const TRACK_HALF_LENGTH_M = 7.2;
-export const TRACK_LENGTH_M = TRACK_HALF_LENGTH_M * 2;
-export const SOUND_SPEED_MPS = 343;
+export const VISUAL_EXAGGERATION = {
+  railGaugeM: 18,
+  sleeperLengthM: 34,
+  sleeperWidthM: 5,
+  sleeperSpacingM: 75,
+  trainScale: 3.5,
+  sensorScale: 9,
+} as const;
+
 export const AUDIO_SAMPLE_RATE_HZ = 16_000;
 export const AUDIO_CHUNK_DURATION_MS = 250;
-export const AUDIO_CHUNK_SAMPLES =
-  (AUDIO_SAMPLE_RATE_HZ * AUDIO_CHUNK_DURATION_MS) / 1_000;
+export const AUDIO_CHUNK_SAMPLES = 4000;
+export const SOUND_SPEED_MPS = 343;
+export const VEHICLE_OFFSETS_M = [0, 44, 80, 116, 152, 188] as const;
 
-export const SENSOR_DEFINITIONS: readonly AudioSensor[] = [
-  {
-    id: "north",
-    streamId: "mic-1",
-    label: "North microphone",
-    shortLabel: "MIC 01",
-    position: [-4.5, 0, -2.2],
-    color: "#73e0ff",
-    phase: 0.2,
-    sensitivity: 1,
-    baseFrequency: 420,
-  },
-  {
-    id: "east",
-    streamId: "mic-2",
-    label: "East microphone",
-    shortLabel: "MIC 02",
-    position: [0, 0, 2.6],
-    color: "#ffbe6b",
-    phase: 2.1,
-    sensitivity: 0.92,
-    baseFrequency: 510,
-  },
-  {
-    id: "west",
-    streamId: "mic-3",
-    label: "West microphone",
-    shortLabel: "MIC 03",
-    position: [4.5, 0, -2.2],
-    color: "#d7a7ff",
-    phase: 4.2,
-    sensitivity: 1.08,
-    baseFrequency: 365,
-  },
-];
-
-export const clamp = (value: number, min: number, max: number) =>
-  Math.min(Math.max(value, min), max);
-
-export function getTrainState(
-  time: number,
-  speedMultiplier = 1,
-  direction: 1 | -1 = 1,
-): TrainState {
-  const speedMps = 1.45 * speedMultiplier;
-  const progressM = ((time * speedMps) % TRACK_LENGTH_M + TRACK_LENGTH_M) % TRACK_LENGTH_M;
-  const x = direction === 1
-    ? -TRACK_HALF_LENGTH_M + progressM
-    : TRACK_HALF_LENGTH_M - progressM;
-
-  return {
-    position: [x, 0.48, 0],
-    direction,
-    speedMps,
-    lengthM: 4.8,
-    progressM,
-  };
+export function getAudioSensors(routeLengthM: number): AudioSensor[] {
+  const firstSensorM = routeLengthM * .34;
+  return [
+    { id: "sensor-1", streamId: "mic-1", label: "Sensor 01", routeDistanceM: firstSensorM, lateralOffsetM: 58, color: "#7d8d71", phase: 0.3 },
+    { id: "sensor-2", streamId: "mic-2", label: "Sensor 02", routeDistanceM: firstSensorM + 100, lateralOffsetM: -64, color: "#a94334", phase: 2.1 },
+    { id: "sensor-3", streamId: "mic-3", label: "Sensor 03", routeDistanceM: firstSensorM + 200, lateralOffsetM: 56, color: "#727873", phase: 4.2 },
+  ];
 }
 
-export function getSourcePosition(
-  time: number,
-  speedMultiplier = 1,
-  direction: 1 | -1 = 1,
-): GroundPosition {
-  return getTrainState(time, speedMultiplier, direction).position;
+export function sampleRoute(points: ScenePoint[], distanceM: number) {
+  if (points.length < 2) return { position: [0, 0, 0] as ScenePoint, rotationY: 0 };
+  let remaining = Math.max(0, distanceM);
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const first = points[index];
+    const second = points[index + 1];
+    const dx = second[0] - first[0];
+    const dz = second[2] - first[2];
+    const length = Math.hypot(dx, dz);
+    if (remaining <= length || index === points.length - 2) {
+      const ratio = length === 0 ? 0 : Math.min(1, remaining / length);
+      return {
+        position: [first[0] + dx * ratio, 3, first[2] + dz * ratio] as ScenePoint,
+        rotationY: Math.atan2(dx, dz),
+      };
+    }
+    remaining -= length;
+  }
+  return { position: points.at(-1)!, rotationY: 0 };
 }
 
-function distanceOnGround(first: GroundPosition, second: GroundPosition) {
-  return Math.hypot(first[0] - second[0], first[2] - second[2]);
+export function formatDistance(meters: number) {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
 }
 
-export function simulateSensorReading(
-  sensor: AudioSensor,
-  time: number,
-  trainState: TrainState,
-  sourceEnabled: boolean,
-  noiseLevel: number,
-): SensorReading {
-  const sourcePosition = trainState.position;
-  const distance = distanceOnGround(sensor.position, sourcePosition);
-  const proximity = 1 / (1 + distance * 0.28);
-  const delaySeconds = distance / SOUND_SPEED_MPS;
-  const carrier = 0.5 + 0.5 * Math.sin(time * 5.4 + sensor.phase - delaySeconds * 4);
-  const pulse = 0.5 + 0.5 * Math.sin(time * 1.15 + sensor.phase * 0.7);
-  const signal = sourceEnabled
-    ? proximity * sensor.sensitivity * (0.22 + carrier * 0.38 + pulse * 0.4)
-    : 0.02;
-  const amplitude = clamp(0.04 + signal + noiseLevel * 0.12, 0.04, 1);
-  const peak = clamp(amplitude * (0.82 + carrier * 0.2), 0, 1);
-  const waveform = Array.from({ length: 40 }, (_, index) => {
-    const phase = index / 40;
-    const detail = Math.sin(phase * Math.PI * 10 + time * 8 + sensor.phase);
-    return clamp(amplitude * (0.36 + Math.abs(detail) * 0.64), 0, 1);
+export function sensorScenePosition(route: ScenePoint[], sensor: AudioSensor): ScenePoint {
+  const sample = sampleRoute(route, sensor.routeDistanceM);
+  const normalX = Math.cos(sample.rotationY);
+  const normalZ = -Math.sin(sample.rotationY);
+  return [
+    sample.position[0] + normalX * sensor.lateralOffsetM,
+    0,
+    sample.position[2] + normalZ * sensor.lateralOffsetM,
+  ];
+}
+
+export function simulateSensorReadings(state: TrainState, sensors: AudioSensor[]): SensorReading[] {
+  return sensors.map((sensor) => {
+    const distance = Math.min(
+      ...state.vehicles.map((vehicle) =>
+        Math.hypot(vehicle.distance_m - sensor.routeDistanceM, sensor.lateralOffsetM),
+      ),
+    );
+    const amplitude = Math.min(1, 0.04 + 1 / (1 + distance * 0.018));
+    return {
+      sensorId: sensor.id,
+      amplitude,
+      decibels: Math.round(-62 + amplitude * 62),
+      distance,
+      delaySeconds: distance / SOUND_SPEED_MPS,
+      frequency: Math.round(90 + amplitude * 70),
+      waveform: Array.from({ length: 40 }, (_, index) =>
+        amplitude * Math.sin((index / 40) * Math.PI * 8 + state.simulation_time_s * 5 + sensor.phase),
+      ),
+    };
   });
-
-  return {
-    sensorId: sensor.id,
-    amplitude,
-    peak,
-    decibels: Math.round(-54 + amplitude * 54),
-    frequency: Math.round(sensor.baseFrequency + carrier * 24),
-    distance,
-    delaySeconds,
-    noiseFloor: noiseLevel,
-    waveform,
-  };
 }
 
-export function simulateSensorReadings(
-  time: number,
-  sourceEnabled: boolean,
-  trainState = getTrainState(time),
-  noiseLevel = 0.06,
-) {
-  return SENSOR_DEFINITIONS.map((sensor) =>
-    simulateSensorReading(sensor, time, trainState, sourceEnabled, noiseLevel),
-  );
+function sourceSample(source: TrainAudioSource | null, time: number, phase: number) {
+  if (source?.samples.length && source.durationSeconds > 0) {
+    const wrapped = ((time % source.durationSeconds) + source.durationSeconds) % source.durationSeconds;
+    return source.samples[Math.floor(wrapped * source.sampleRateHz) % source.samples.length];
+  }
+  return Math.sin(time * Math.PI * 2 * 92) * 0.55 + Math.sin(time * Math.PI * 2 * 184 + phase) * 0.22;
 }
 
-function deterministicNoise(index: number, time: number, phase: number) {
-  return Math.sin(index * 12.9898 + time * 78.233 + phase * 37.719) * 2 - 1;
-}
-
-/**
- * Generate one distinct, delayed PCM stream per virtual microphone.
- * The signal is deliberately synthetic until train.wav is connected to the
- * browser/backend asset pipeline; its timing and attenuation model match the
- * same microphone contract used for the eventual prerecorded source.
- */
 export function generateMicrophoneSamples(
   sensor: AudioSensor,
   simulationTime: number,
-  trainState: TrainState,
-  sourceEnabled: boolean,
-  noiseLevel: number,
-  audioSource?: TrainAudioSource | null,
-): Float32Array {
-  const reading = simulateSensorReading(
-    sensor,
-    simulationTime,
-    trainState,
-    sourceEnabled,
-    noiseLevel,
-  );
+  trainDistanceM: number,
+  audioSource: TrainAudioSource | null,
+) {
+  // Hold the acoustic source fixed for each 1 s analysis window. This mirrors
+  // the localizer's documented point-source approximation while the renderer
+  // continues to show the physically moving six-vehicle consist.
+  const consistCenterM = trainDistanceM - 97 - (simulationTime % 1) * 16;
+  const distance = Math.hypot(consistCenterM - sensor.routeDistanceM, sensor.lateralOffsetM);
+  const delay = distance / SOUND_SPEED_MPS;
+  const attenuation = Math.max(0.035, 1 / (1 + distance * 0.014));
   const samples = new Float32Array(AUDIO_CHUNK_SAMPLES);
-  const delayedStart = simulationTime - reading.delaySeconds;
-  const attenuation = clamp(1 / (1 + reading.distance * 0.22), 0.08, 1);
-
   for (let index = 0; index < samples.length; index += 1) {
-    const sourceTime = delayedStart + index / AUDIO_SAMPLE_RATE_HZ;
-    const engine = audioSource?.samples.length
-      ? audioSource.samples[
-          Math.floor(
-            (((sourceTime % audioSource.durationSeconds) +
-              audioSource.durationSeconds) %
-              audioSource.durationSeconds) * audioSource.sampleRateHz,
-          ) % audioSource.samples.length
-        ]
-      : Math.sin(sourceTime * Math.PI * 2 * 92) * 0.52 +
-        Math.sin(sourceTime * Math.PI * 2 * 184 + sensor.phase) * 0.22 +
-        Math.sin(sourceTime * Math.PI * 2 * 37) * 0.16;
-    const envelope = 0.72 + 0.28 * Math.sin(sourceTime * Math.PI * 2 * 1.15);
-    const noise = deterministicNoise(index, simulationTime, sensor.phase);
-    const signal = sourceEnabled ? engine * envelope * attenuation : 0;
-    samples[index] = clamp(signal * 0.7 + noise * noiseLevel * 0.16, -1, 1);
+    const time = simulationTime + index / AUDIO_SAMPLE_RATE_HZ - delay;
+    const engine = sourceSample(audioSource, time, sensor.phase);
+    const rhythm = 0.72 + 0.28 * Math.sin(time * Math.PI * 2 * 1.1);
+    const noise = Math.sin(index * 12.9898 + simulationTime * 78.233 + sensor.phase * 37.719) * 0.012;
+    samples[index] = Math.max(-1, Math.min(1, engine * rhythm * attenuation + noise));
   }
-
   return samples;
 }

@@ -99,7 +99,7 @@ def chunks_from_window(
                         y_m=mic.y_m,
                         audio=channel[offset : offset + SAMPLES_PER_CHUNK].tolist(),
                     )
-                    for mic, channel in zip(microphones, channels, strict=True)
+                    for mic, channel in zip(microphones, channels)
                 ],
             )
         )

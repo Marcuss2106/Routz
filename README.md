@@ -1,20 +1,5 @@
 # Routz
 
-Mobile-friendly driving-route app built on Google Maps.
+The current first-stage deliverable is a working 3D railroad simulation around downtown Columbia, South Carolina.
 
-## Packages
-
-- `frontend/` — Next.js v1 app: Google map, place search, driving routes. See [frontend/README.md](frontend/README.md) for setup (requires a Google Maps Platform API key).
-- `backend/` — reserved for later versions (no backend in v1).
-
-## Quick start (v1)
-
-```bash
-cd frontend
-cp .env.example .env.local
-# paste your Google Maps API key into .env.local
-npm install
-npm run dev
-```
-
-Open http://localhost:3000.
+Run the authoritative rail-motion service in [`backend`](backend/README.md), the merged audio-localization service in [`simulation_backend`](simulation_backend/README.md), then the Next.js renderer in [`simulation_frontend`](simulation_frontend/README.md). The `frontend` directory remains the separate user-facing routing application from GitHub.

@@ -46,12 +46,12 @@ export function useTrainAudioSource() {
         }
       })
       .finally(() => {
-        void audioContext.close();
+        if (audioContext.state !== "closed") void audioContext.close();
       });
 
     return () => {
       cancelled = true;
-      void audioContext.close();
+      if (audioContext.state !== "closed") void audioContext.close();
     };
   }, []);
 

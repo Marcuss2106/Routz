@@ -101,7 +101,7 @@ def test_pcm16_matches_the_simulation_frontend_layout() -> None:
                 "z_m": z_m,
                 "audio_pcm16_base64": _pcm16_base64(channel[:SAMPLES_PER_CHUNK]),
             }
-            for (mic_id, x_m, z_m), channel in zip(layout, channels, strict=True)
+            for (mic_id, x_m, z_m), channel in zip(layout, channels)
         ],
     }
     chunk = MicrophoneAudioChunk.model_validate(message)
