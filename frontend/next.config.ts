@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  /* Keep the dev badge off the bottom route bar. */
+  devIndicators: { position: "top-right" },
   experimental: {
     agentFeedback: true,
   },

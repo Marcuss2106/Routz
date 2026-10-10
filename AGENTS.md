@@ -7,7 +7,9 @@
 ## Project mission
 Routez is a **hackathon prototype**, not an operational emergency-response system. It demonstrates how simulated acoustic observations of a freight train could be processed to estimate train movement and predict railroad-crossing blockages. A separate ambulance-facing web app uses those predictions to compare routes and provide optional ElevenLabs voice guidance.
 
-**Core demo:** A 3D train moves past three virtual microphones. The simulation emits synchronized audio chunks derived from one prerecorded train recording, with modeled delays, attenuation, and noise. A Python service denoises and localizes the sound, tracks movement, and predicts crossing occupancy. Those predictions reach the user-facing backend, which evaluates ambulance routes and streams updates to a Next.js map on an iPhone.
+**Core demo:** A 3D train moves along one shared curved rail polyline past three virtual microphones. The simulation emits synchronized audio chunks derived from one prerecorded train recording, with modeled moving extended-source delays, attenuation, and noise. A Python service denoises and localizes the sound on the rail, tracks movement, estimates occupancy-derived train length, and predicts crossing occupancy. Those predictions reach the user-facing backend, which evaluates ambulance routes and streams updates to a Next.js map on an iPhone.
+
+**Acoustic-only inference rule:** The frontend may use ground truth to render the scene and synthesize microphone audio. The simulation backend may receive only microphone signals, timestamps/sequence metadata, and microphone geometry. It must never receive train position, speed, direction, or length as inference input.
 
 **Always label all data, routes, predictions, and claimed time savings as simulated unless independently validated. Never market this prototype as safe for real dispatch.**
 
@@ -16,32 +18,42 @@ Keep the four existing top-level application folders. Do not merge services or i
 
 ```text
 routez/
+├── shared/                # simulation_geometry.json, shared physical coordinate source
 ├── simulation_frontend/  # Next.js, TypeScript, React Three Fiber, Drei, Zustand
 ├── simulation_backend/   # Python, FastAPI, NumPy, SciPy, optional scikit-learn/FilterPy
-├── frontend/             # user-facing Next.js map, Google Maps, voice playback
-├── backend/              # user backend: prediction ingest, alerts, ElevenLabs
+├── frontend/             # Next.js, TypeScript, Google Maps, ElevenLabs
+├── backend/              # railroad motion on :8000; user voice API on :8002
 └── AGENTS.md
 ```
 
 ### Ownership and responsibilities
 
 **simulation-frontend**
-- Render railroad track, moving train, three microphones, crossing, and optional sound-wave visualization.
+- Render railroad track, the cached road layer, verified ground-level crossings, moving train, three microphones, and optional sound-wave visualization.
 - Provide play/pause/reset, speed, direction, noise level, and train-length controls.
 - Use one prerecorded `train.wav` as the common source for three **distinct** virtual microphone streams; model per-microphone sound propagation delay, attenuation, and added noise.
-- Send timestamped, synchronized audio chunks and microphone coordinates to the simulation backend. Do not send ground-truth position/speed to inference endpoints.
+- Read `shared/simulation_geometry.json` for the track polyline and microphone coordinates.
+- Send timestamped, synchronized audio chunks and microphone coordinates to the simulation backend. Do not send ground-truth position/speed/length/direction or a source-file hint to inference endpoints.
 - May show ground-truth position in a separate debug/evaluation channel, visibly labeled.
-- A single simulation clock is essential. Avoid independently advancing authoritative time in multiple services. For this four-folder design, the simulation frontend can own the clock and send monotonically increasing `simulation_time_s` and sequence numbers; the backend must use these timestamps rather than wall-clock receipt times.
+- A single simulation clock is essential. `backend/` owns the authoritative clock, route distance, and train state; `simulation-frontend` interpolates snapshots for rendering and derives synchronized sensor chunks from that clock for `simulation_backend`.
+
+**backend (railroad simulation service)**
+- FastAPI service for cached SCDOT railroad geometry, cached OpenStreetMap roads and declared level crossings, graph/route selection, shared coordinate conversion, and authoritative train motion.
+- Publishes geometry over HTTP and state at about 10 Hz over WebSocket, accepting play/pause/restart/playback-speed commands from any client.
+- This service runs on port 8000. `simulation_backend` runs on port 8001 and consumes its clock indirectly through timestamped frontend audio chunks.
 
 **simulation-backend**
 - Receive audio chunks from the simulation frontend over a persistent WebSocket (preferred for continuous audio).
-- Denoise the three channels; estimate relative delays with cross-correlation/GCC-PHAT; infer train location constrained to known track geometry.
-- Track consecutive estimates to infer speed and direction; use a simple kinematic model/Kalman filter first. Predict crossing arrival and estimated clearance windows, including uncertainty.
+- Read the same `shared/simulation_geometry.json` as the frontend; reject chunks whose microphone geometry does not match it.
+- Denoise the three channels; estimate relative delays with cross-correlation/GCC-PHAT; infer train `s` constrained to the shared track polyline and reject weak/contradictory evidence.
+- Track consecutive estimates with `[s, velocity_along_track, acceleration]`; derive nonnegative speed and numeric degrees-from-east direction from the local rail tangent.
+- Infer train length from acoustic occupancy duration. Length remains null/provisional until the train clears the array; never substitute a hard-coded consist length.
+- Publish `train_state_estimate` events with confidence and uncertainty for position, speed, length, and direction.
 - Send compact, timestamped crossing predictions to `user-backend` using HTTP POST for MVP simplicity; do not send raw audio downstream.
 - Keep signal processing in memory; avoid saving each sample to PostgreSQL.
 - Train sound is an extended source; a single moving point source is an acknowledged simulation simplification. A prerecorded sound is not evidence of real-world localization accuracy.
 
-**user-backend (`backend/`)**
+**user-backend (`backend/user_api.py`, port 8002)**
 - Accept and validate prediction events from simulation-backend; reject duplicates and stale/out-of-order updates.
 - Own PostgreSQL access, persistent crossings, recent predictions, and optional run history. Use one Vultr-hosted PostgreSQL instance; neither browser frontend gets database credentials.
 - Retrieve candidate road routes from Google Maps Routes API; overlay known rail crossings and predicted blockage intervals; evaluate each candidate at its expected crossing arrival time.
@@ -100,18 +112,18 @@ Start with `fastapi`, `uvicorn[standard]`, `numpy`, `scipy`, and `pydantic`; add
 
 ## Event contracts
 
-Locked for the demo. The code source of truth is `simulation_backend/app/geometry.py`. Use a stable `simulation_id`, `sequence` increasing by exactly 1, and simulation-relative `simulation_time_s` in every message. Audio must be synchronized and sampled at the same sample rate. Coordinate frames and units must be explicit.
+The physical source of truth is `shared/simulation_geometry.json`; the wire source of truth is `simulation_backend/app/schemas.py`. Use a stable `simulation_id`, `sequence` increasing by exactly 1, and simulation-relative timestamps. The backend timestamps a full trailing analysis window at its center, not at the arrival time of the latest chunk.
 
-**Locked demo scene**
+**Shared geometry**
 
-- Sample rate `16000` Hz, chunk duration `250` ms, **4000 float samples** per microphone.
-- The simulation frontend sends `audio_pcm16_base64` (little-endian PCM16) plus `z_m`. In that scene `y` is elevation and `z` is the other ground axis. A JSON `audio` float array with the offset in `y_m` is also accepted. Do not send both encodings in one microphone.
-- Microphones, 20 m north of the rail: `mic-1` (0 m, 20 m), `mic-2` (100 m, 20 m), `mic-3` (200 m, 20 m).
-- Rail is the line `y = 0`. Positive x is east. Speed of sound used by the localizer is 343 m/s.
-- Crossings: `crossing-001` at rail x = 50 m, `crossing-002` at rail x = 150 m.
-- Assumed consist length for blockage math is 180 m, centered on the acoustic fix. This is an assumption, not a measurement.
-- Rail x = 0 maps to latitude 34.0007, longitude -81.0348. Positive x moves east in longitude.
-- The backend localizes on a trailing 1 s buffer, so the first three 250 ms chunks of a run return `status: "unknown"`. The train is treated as fixed during that window. Motion that changes the delays inside the window smears the peak, and the fix is dropped instead of guessed.
+- Sample rate `16000` Hz, chunk duration `250` ms, **4000 PCM16 samples** per microphone.
+- Local coordinates are `x_m = east`, `y_m = north`, and `s_m = distance along the rail polyline`. Microphone chunks use `audio_pcm16_base64` plus these `x_m`/`y_m` coordinates.
+- Microphones are `mic-1 (0, 20)`, `mic-2 (100, 20)`, and `mic-3 (50, -30)` metres. They are non-collinear.
+- Track vertices are `(0, 0)`, `(500, 0)`, and `(1000, 300)` metres. The polyline conversion does not assume constant latitude. Speed of sound is 343 m/s.
+- Crossings are stored by rail distance in the shared JSON (`crossing-001` at `s=300 m`, `crossing-002` at `s=850 m`).
+- Train length is never a configured backend truth; it remains null/provisional until acoustic occupancy clears the array.
+- The origin is latitude 34.0007, longitude -81.0348. Positive east/north rail coordinates are converted to latitude/longitude locally.
+- The backend localizes on a trailing 1 s buffer, timestamps full-window estimates at the window center, and rejects weak or contradictory delay evidence.
 - `sequence` must be exactly the previous accepted sequence plus 1. Gaps and duplicates are rejected and do not advance state. `{"type":"simulation_reset","simulation_id":"..."}` clears that run.
 
 **Simulation -> simulation backend (WebSocket)**
@@ -125,39 +137,72 @@ Locked for the demo. The code source of truth is `simulation_backend/app/geometr
   "sample_rate_hz": 16000,
   "duration_ms": 250,
   "microphones": [
-    {"id": "mic-1", "x_m": 0, "y_m": 20, "audio": [0.0, 0.01]},
-    {"id": "mic-2", "x_m": 100, "y_m": 20, "audio": [0.0, -0.02]},
-    {"id": "mic-3", "x_m": 200, "y_m": 20, "audio": [0.0, 0.03]}
+    {"id": "mic-1", "x_m": 0, "y_m": 20, "audio_pcm16_base64": "..."},
+    {"id": "mic-2", "x_m": 100, "y_m": 20, "audio_pcm16_base64": "..."},
+    {"id": "mic-3", "x_m": 50, "y_m": -30, "audio_pcm16_base64": "..."}
   ]
 }
 ```
 
-`audio` arrays in the example are abbreviated. Each live chunk contains 4,000 samples per microphone. The simulation frontend sends those samples as `audio_pcm16_base64` and connects to `ws://localhost:8000/ws/simulation`.
+Each live chunk contains 4,000 PCM16 samples per microphone. The frontend sends
+only microphone signals and geometry, plus synchronization metadata; it sends no
+train state or source-file hint. The audio inference socket is
+`ws://localhost:8001/ws/simulation`.
 
-**Simulation backend -> user backend (HTTP POST `/api/predictions`)**
+**Simulation backend -> user backend and simulation frontend**
 
 ```json
 {
-  "type": "crossing_prediction",
+  "type": "train_state_estimate",
   "simulation_id": "demo-001",
   "sequence": 42,
   "simulation_time_s": 10.5,
-  "train_id": "train-001",
-  "status": "tracking",
-  "estimated_position": {"latitude": 34.0007, "longitude": -81.0348},
-  "estimated_speed_mps": 13.4,
-  "direction": "eastbound",
-  "crossings": [
-    {"crossing_id": "crossing-001", "eta_seconds": 45,
-     "estimated_blockage_seconds": 120, "status": "approaching"}
-  ],
-  "source": "simulated_audio_inference"
+  "train_id": "acoustic-train-demo-001-001",
+  "track_id": "acoustic-track-001",
+  "latitude": 34.0007,
+  "longitude": -81.0339,
+  "speed_mps": 8.4,
+  "length_m": null,
+  "direction_deg_from_east": 0.0,
+  "status": "length_pending",
+  "confidence": {"position": 0.91, "speed": 0.84, "length": 0.0, "direction": 0.97},
+  "uncertainty": {"position_m": 6.5, "speed_mps": 0.8, "length_m": null, "direction_deg": 4.0},
+  "source": "acoustic_array",
+  "label": "simulated_acoustic_estimate"
 }
 ```
 
-These numbers are illustrative, not actual detections. `eta_seconds` is relative to `simulation_time_s`, not wall time. `status` is `tracking` or `unknown`. Per-crossing `status` is `approaching`, `blocking`, `clear`, or `unknown`. While approaching, `estimated_blockage_seconds` is the full closure (assumed length / speed). While blocking, it is the remaining time until the rear clears. A stopped train publishes a near-zero speed and unknown crossing ETAs.
+These numbers are illustrative, not actual detections. `speed_mps` is nonnegative. Direction is numeric degrees from east: east `0`, north `90`, west `180`, south `270`; a curved rail uses its local tangent. `length_m` remains null until acoustic occupancy clears the array, then becomes a backend-derived estimate. Main statuses are `detected`, `length_pending`, `tracking`, `cleared`, and `unknown`. Crossing forecasts are unknown while length is unavailable. The backend generates a new `train_id` for each cleared run and supports one acoustically dominant train at a time.
 
-If speed or location cannot be inferred, publish `unknown` and null speeds rather than a guessed value. A position may still be present when speed is null. The WebSocket reply to the simulation frontend adds `estimated_position_m` (rail axis) and `"label": "estimate"`. Those two fields are not included on the user-backend POST. Only add confidence scores if calibrated or clearly defined.
+If speed or location cannot be inferred, publish `unknown` and null values rather than a guessed value. Every estimate includes confidence and uncertainty for position, speed, length, and direction. The `source` is explicitly `acoustic_array` and the `label` is `simulated_acoustic_estimate`.
+
+**Train observation -> user app (current integration format, Oct 2026)**
+
+The inference team delivers compact train-state observations (wall-clock UTC) instead of the earlier `simulation_time_s` envelope for the user-app vertical slice. The user app derives per-road blockage windows client-side (see `frontend/lib/trains.ts`) until the user-backend prediction service lands.
+
+```json
+{
+  "trainId": "train-001",
+  "observedAt": "2026-10-10T20:45:00Z",
+  "lat": 34.0007,
+  "lon": -81.0348,
+  "speedMps": 10,
+  "lengthM": 1200,
+  "degFromEast": 90,
+  "positionReference": "front"
+}
+```
+
+- `degFromEast`: math convention, counter-clockwise from east: `0` = east, `90` = north, `180` = west, `270` = south.
+- `positionReference`: `front` | `center` | `rear` — which point of the train `lat`/`lon` refers to.
+- `observedAt`: ISO-8601 UTC wall clock. Stale observations (>~90 s) must be flagged; do not silently treat old positions as current.
+- Prediction model (MVP): straight-line constant-velocity motion along `degFromEast`; train occupies `[front - lengthM, front]`; per-crossing `blockStartUtc`/`blockEndUtc` = front-ETA / rear-clear + buffer. Crossings outside a ~120 m corridor or beyond a 15-min horizon are skipped. See `frontend/lib/routeCrossing.ts` for route-conflict scoring (route within ~45 m of a crossing + driver ETA overlapping the block window = conflict; pick the candidate with lowest travel + wait).
+- Crossings are **real FRA inventory data** (Form 71, SOUTH CAROLINA / COLUMBIA, public at-grade open, Norfolk Southern, with DOT IDs) curated to two corridors in `frontend/lib/crossings.ts` and mirrored in `backend/src/backend/crossings.py`. Predictions derived from them are still simulated.
+- `degFromEast` convention confirmed (Oct 2026): math CCW from east, 0=E/90=N/180=W/270=S.
+
+**Train-observation stream (documented, not served by the current processes)**
+- Planned FastAPI + SSE contract: `POST /api/train-observations`, `GET /api/predictions`, `GET /api/crossings`, `GET /api/events`. `backend/main.py` is the railroad clock and does not implement these routes. `backend/user_api.py` is the voice API.
+- Frontend links via `NEXT_PUBLIC_ROUTZ_API_URL` (`frontend/lib/trainStream.ts`) and falls back to identical local math when that URL is unset or unreachable.
 
 **User backend -> user frontend (WebSocket)**
 - Forward current predictions and selected route/alerts, with `simulation_id`, `sequence`, and timestamp.
@@ -199,13 +244,14 @@ cp backend/.env.example backend/.env
 
 ```dotenv
 NEXT_PUBLIC_SIMULATION_WS_URL=ws://localhost:8000/ws/simulation
+NEXT_PUBLIC_AUDIO_WS_URL=ws://localhost:8001/ws/simulation
 ```
 
 `simulation-backend/.env.example` (Python/FastAPI, server-side):
 
 ```dotenv
-SIMULATION_ALLOWED_ORIGINS=http://localhost:3000
-USER_BACKEND_PREDICTIONS_URL=http://localhost:8001/api/predictions
+SIMULATION_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3100
+USER_BACKEND_PREDICTIONS_URL=http://localhost:8002/api/predictions
 INTERNAL_API_TOKEN=replace-with-shared-private-token
 AUDIO_SAMPLE_RATE_HZ=16000
 ```
@@ -213,23 +259,25 @@ AUDIO_SAMPLE_RATE_HZ=16000
 `frontend/.env.example` (the user-facing Next.js map):
 
 ```dotenv
-NEXT_PUBLIC_USER_API_URL=http://localhost:8001
-NEXT_PUBLIC_USER_WS_URL=ws://localhost:8001/ws/updates
+NEXT_PUBLIC_USER_API_URL=http://localhost:8002
+NEXT_PUBLIC_USER_WS_URL=ws://localhost:8002/ws/updates
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=replace-with-browser-restricted-key
 ```
 
-`backend/.env.example` (the user backend; Python/FastAPI):
+`backend/.env.example` (railroad motion and the user voice API):
 
 ```dotenv
+SIMULATION_ALLOWED_ORIGINS=http://localhost:3000
+USER_BACKEND_PORT=8002
 USER_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
 INTERNAL_API_TOKEN=replace-with-shared-private-token
 ELEVENLABS_API_KEY=replace-with-private-key-if-generated-server-side
 ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
-- The speech path is implemented: the map in `frontend/` plays audio from `backend/` on port `8001`. Change templates when ports differ. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the backend.
+- Current local ports are simulation frontend `3000`, rail-motion `backend.main` `8000`, audio inference `8001`, and the user voice API `backend.user_api` `8002`. The map plays audio from port `8002`. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the voice API.
 - Next.js exposes **all `NEXT_PUBLIC_*` variables to the browser**. Only use that prefix for intentionally public configuration. Google Maps browser keys are not secrets: restrict them by HTTP referrer and API; keep Google Routes server keys private and restrict them separately.
-- ElevenLabs is called from `backend/`. The key stays in `ELEVENLABS_API_KEY`. The map only requests `GET /api/speech/{alert_id}` and plays the audio. `ELEVENLABS_VOICE_ID` defaults to the public Rachel voice when unset. PostgreSQL and the Google server key are not read by this speech service yet.
+- ElevenLabs is called from `backend/user_api.py` on port 8002. The key stays in `ELEVENLABS_API_KEY`. The map only requests `GET /api/speech/{alert_id}` and plays the audio. `ELEVENLABS_VOICE_ID` defaults to the public Rachel voice when unset. PostgreSQL and the Google server key are not read by this speech service yet.
 - The same `INTERNAL_API_TOKEN` value must be configured in both Python simulation backend and user backend. Authenticate prediction ingestion (e.g., `Authorization: Bearer <token>`) and use TLS/HTTPS in deployment. Do not put this token in either frontend.
 - For Vultr PostgreSQL, use the actual connection string and required TLS settings from the provider. Restrict database network access to the user backend. Avoid logging connection URLs or credentials.
 - Use `python-dotenv` or `pydantic-settings` in Python as needed; Next.js automatically reads `.env.local`. Validate required server variables on startup and fail clearly when missing.

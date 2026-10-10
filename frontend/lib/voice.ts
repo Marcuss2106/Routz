@@ -16,12 +16,12 @@ export type RouteUpdate = {
 };
 
 export function userApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_USER_API_URL ?? "http://localhost:8001";
+  const configured = process.env.NEXT_PUBLIC_USER_API_URL ?? "http://localhost:8002";
   return configured.replace(/\/$/, "");
 }
 
 export function userWsUrl(): string {
-  return process.env.NEXT_PUBLIC_USER_WS_URL ?? "ws://localhost:8001/ws/updates";
+  return process.env.NEXT_PUBLIC_USER_WS_URL ?? "ws://localhost:8002/ws/updates";
 }
 
 export function speechUrl(alertId: string): string {

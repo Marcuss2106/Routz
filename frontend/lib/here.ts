@@ -19,7 +19,7 @@ export function readCurrentLocation(): Promise<HereFix | null> {
     return Promise.resolve(cached.fix);
   }
   if (inflight) return inflight;
-  inflight = new Promise((resolve) => {
+  const request = new Promise<HereFix | null>((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve(null);
       return;
@@ -36,8 +36,10 @@ export function readCurrentLocation(): Promise<HereFix | null> {
       () => resolve(null),
       { enableHighAccuracy: false, timeout: 8000, maximumAge: FRESH_MS }
     );
-  }).finally(() => {
-    inflight = null;
   });
-  return inflight;
+  inflight = request;
+  void request.finally(() => {
+    if (inflight === request) inflight = null;
+  });
+  return request;
 }

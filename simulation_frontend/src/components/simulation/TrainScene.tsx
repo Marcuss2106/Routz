@@ -1,354 +1,124 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Grid, Html, Line, OrbitControls } from "@react-three/drei";
-import { useRef, type MutableRefObject } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Environment, Html, OrbitControls } from "@react-three/drei";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-
-import { SENSOR_DEFINITIONS } from "@/lib/simulation";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { Railroad } from "./Railroad";
+import { Train } from "./Train";
+import { Microphone } from "./Microphone";
+import { SoundWaves } from "./SoundWaves";
+import { CrossingMarkers, RoadLayer } from "./Roads";
+import { getAudioSensors, sensorScenePosition, VISUAL_EXAGGERATION } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
-import { Microphone } from "@/components/simulation/Microphone";
-import { Railroad } from "@/components/simulation/Railroad";
-import { Train } from "@/components/simulation/Train";
-import type {
-  AudioSensor,
-  GroundPosition,
-  SensorReading,
-  TrainState,
-} from "@/types/simulation";
 
-interface TrainSceneProps {
-  readings: SensorReading[];
-  sourcePosition: GroundPosition;
-  trainState: TrainState;
+const INITIAL_CAMERA_POSITION = new THREE.Vector3(2400, 2200, 2400);
+
+function cameraOffset(mode: "overview" | "top" | "follow", routeLength: number) {
+  if (mode === "top") return new THREE.Vector3(0, Math.min(1500, Math.max(950, routeLength * 1.35)), 1);
+  if (mode === "follow") return new THREE.Vector3(720, 620, 720);
+  return new THREE.Vector3(2400, 2200, 2400);
 }
 
-interface SensorMarkerProps {
-  sensor: AudioSensor;
-  reading: SensorReading;
-  selected: boolean;
-  showWaves: boolean;
-  onSelect: () => void;
-}
+function CameraRig({ routeLength }: { routeLength: number }) {
+  const controls = useRef<OrbitControlsImpl>(null);
+  const camera = useThree((state) => state.camera);
+  const resetToken = useSimulationStore((state) => state.cameraReset);
+  const cameraMode = useSimulationStore((state) => state.cameraMode);
+  const initialized = useRef(false);
+  const transition = useRef<{
+    startedAt: number;
+    fromPosition: THREE.Vector3;
+    fromTarget: THREE.Vector3;
+    toPosition: THREE.Vector3;
+    toTarget: THREE.Vector3;
+  } | null>(null);
 
-function SignalRing({
-  position,
-  color,
-  amplitude,
-  delay,
-}: {
-  position: GroundPosition;
-  color: string;
-  amplitude: number;
-  delay: number;
-}) {
-  const ringRef = useRef<THREE.Mesh>(null);
-  const materialRef = useRef<THREE.MeshBasicMaterial>(null);
+  useEffect(() => {
+    const current = useSimulationStore.getState().current;
+    if (!current || !controls.current || !initialized.current) return;
+    const position = current.value.scene_position;
+    const target = new THREE.Vector3(position.x, 0, position.z);
+    transition.current = {
+      startedAt: performance.now(),
+      fromPosition: camera.position.clone(),
+      fromTarget: controls.current.target.clone(),
+      toPosition: target.clone().add(cameraOffset(cameraMode, routeLength)),
+      toTarget: target,
+    };
+  }, [camera, cameraMode, resetToken, routeLength]);
 
-  useFrame(({ clock }) => {
-    const cycle = (clock.elapsedTime * 0.72 + delay) % 1;
-    const scale = 0.42 + cycle * (1.15 + amplitude * 0.85);
+  useFrame(() => {
+    const { cameraMode: mode, current } = useSimulationStore.getState();
+    if (!current || !controls.current) return;
+    const position = current.value.scene_position;
+    const target = new THREE.Vector3(position.x, 0, position.z);
 
-    if (ringRef.current) {
-      ringRef.current.scale.setScalar(scale);
+    if (!initialized.current) {
+      initialized.current = true;
+      controls.current.target.copy(target);
+      camera.position.copy(target.clone().add(cameraOffset("overview", routeLength)));
+      controls.current.update();
+      return;
     }
-    if (materialRef.current) {
-      materialRef.current.opacity = (1 - cycle) * (0.12 + amplitude * 0.5);
+
+    if (transition.current) {
+      const movement = transition.current;
+      const progress = Math.min(1, (performance.now() - movement.startedAt) / 1200);
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      camera.position.lerpVectors(movement.fromPosition, movement.toPosition, eased);
+      controls.current.target.lerpVectors(movement.fromTarget, movement.toTarget, eased);
+      controls.current.update();
+      if (progress >= 1) transition.current = null;
+      return;
     }
+
+    if (mode === "overview") return;
+    controls.current.target.lerp(target, 0.12);
+    camera.position.lerp(target.clone().add(cameraOffset(mode, routeLength)), 0.08);
+    controls.current.update();
   });
-
-  return (
-    <mesh
-      ref={ringRef}
-      position={[position[0], 0.045, position[2]]}
-      rotation={[-Math.PI / 2, 0, 0]}
-    >
-      <ringGeometry args={[0.82, 0.86, 64]} />
-      <meshBasicMaterial
-        ref={materialRef}
-        color={color}
-        transparent
-        opacity={0.35}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-  );
+  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} minDistance={180} maxDistance={55000} maxPolarAngle={Math.PI / 2.08} />;
 }
 
-function SensorMarker({
-  sensor,
-  reading,
-  selected,
-  showWaves,
-  onSelect,
-}: SensorMarkerProps) {
+export default function TrainScene() {
+  const railroad = useSimulationStore((state) => state.railroad)!;
+  const sensorReadings = useSimulationStore((state) => state.sensorReadings);
+  const sensors = useMemo(() => getAudioSensors(railroad.route.length_m), [railroad.route.length_m]);
   return (
-    <>
-      {showWaves &&
-        [0, 1, 2].map((delay) => (
-          <SignalRing
-            key={`${sensor.id}-wave-${delay}`}
-            position={sensor.position}
-            color={sensor.color}
-            amplitude={reading.amplitude}
-            delay={delay / 3}
-          />
-        ))}
-      <group
-        position={[sensor.position[0], 0, sensor.position[2]]}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect();
-        }}
-        onPointerOver={() => {
-          document.body.style.cursor = "pointer";
-        }}
-        onPointerOut={() => {
-          document.body.style.cursor = "default";
-        }}
+    <div className="canvas-wrap">
+      <Canvas
+        shadows
+        gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+        camera={{ position: INITIAL_CAMERA_POSITION.toArray(), fov: 38, near: 5, far: 60000 }}
+        dpr={[1, 2]}
       >
-        <Microphone sensor={sensor} reading={reading} selected={selected} />
-        <Html
-          position={[0, 1.55, 0]}
-          center
-          distanceFactor={8}
-          style={{ pointerEvents: "none" }}
-        >
-          <div
-            style={{
-              border: `1px solid ${sensor.color}55`,
-              background: "rgba(5, 10, 22, 0.88)",
-              borderRadius: 8,
-              color: "#eef5ff",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              padding: "5px 8px",
-              textAlign: "center",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <div style={{ color: sensor.color }}>{sensor.shortLabel}</div>
-            <div style={{ color: "#9badc7", fontSize: 9 }}>
-              {reading.decibels} dB
-            </div>
-          </div>
-        </Html>
-      </group>
-    </>
-  );
-}
-
-function SourceEmitter({ position }: { position: GroundPosition }) {
-  const sourceRef = useRef<THREE.Group>(null);
-
-  useFrame(({ clock }) => {
-    if (sourceRef.current) {
-      sourceRef.current.position.y = 0.3 + Math.sin(clock.elapsedTime * 3) * 0.05;
-    }
-  });
-
-  return (
-    <group ref={sourceRef} position={[position[0], 0.3, position[2]]}>
-      <mesh castShadow>
-        <sphereGeometry args={[0.28, 24, 24]} />
-        <meshStandardMaterial
-          color="#ff5d82"
-          emissive="#ff315f"
-          emissiveIntensity={2.2}
-        />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.25, 0]}>
-        <ringGeometry args={[0.44, 0.47, 48]} />
-        <meshBasicMaterial color="#ff5d82" transparent opacity={0.7} />
-      </mesh>
-      <pointLight color="#ff416d" intensity={2} distance={3.5} />
-      <Html
-        position={[0, 0.75, 0]}
-        center
-        distanceFactor={8}
-        style={{ pointerEvents: "none" }}
-      >
-        <div
-          style={{
-            color: "#ff9fb5",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: 10,
-            letterSpacing: "0.08em",
-            whiteSpace: "nowrap",
-          }}
-        >
-          TRAIN AUDIO
-        </div>
-      </Html>
-    </group>
-  );
-}
-
-function Ground({
-  sourcePosition,
-  showLinks,
-  readings,
-}: Pick<TrainSceneProps, "readings" | "sourcePosition"> & { showLinks: boolean }) {
-  return (
-    <>
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.08, 0]}
-        receiveShadow
-      >
-        <planeGeometry args={[18, 12]} />
-        <meshStandardMaterial
-          color="#0b1424"
-          roughness={0.92}
-          metalness={0.05}
-        />
-      </mesh>
-      <Grid
-        args={[18, 12]}
-        position={[0, -0.01, 0]}
-        cellSize={1}
-        cellThickness={0.5}
-        cellColor="#1b3552"
-        sectionSize={3}
-        sectionThickness={0.9}
-        sectionColor="#2a4a6b"
-        fadeDistance={18}
-        fadeStrength={1.2}
-        infiniteGrid={false}
-      />
-      <Railroad />
-      {showLinks &&
-        readings.map((reading) => {
-          const sensor = SENSOR_DEFINITIONS.find(
-            (item) => item.id === reading.sensorId,
-          );
-          if (!sensor) return null;
-          const start: GroundPosition = [
-            sourcePosition[0],
-            0.06,
-            sourcePosition[2],
-          ];
-          const end: GroundPosition = [sensor.position[0], 0.06, sensor.position[2]];
+        <color attach="background" args={["#d8d7c7"]} />
+        <fog attach="fog" args={["#d8d7c7", 22000, 48000]} />
+        <ambientLight intensity={1.25} />
+        <directionalLight castShadow position={[-9000, 16000, 7000]} intensity={2.2} color="#fff5d8" shadow-mapSize={[2048, 2048]} shadow-camera-far={45000} shadow-camera-left={-18000} shadow-camera-right={18000} shadow-camera-top={18000} shadow-camera-bottom={-18000} />
+        <mesh rotation-x={-Math.PI / 2} receiveShadow position-y={-1}><circleGeometry args={[17400, 96]} /><meshStandardMaterial color="#b9c0a5" roughness={1} /></mesh>
+        <RoadLayer roads={railroad.roads ?? []} />
+        <Railroad lines={railroad.network} route={railroad.route.points} />
+        <CrossingMarkers crossings={railroad.crossings ?? []} />
+        <SoundWaves route={railroad.route.points} />
+        <Train route={railroad.route.points} />
+        {sensors.map((sensor) => {
+          const reading = sensorReadings.find((item) => item.sensorId === sensor.id) ?? { sensorId: sensor.id, amplitude: 0.04, decibels: -60, distance: 0, delaySeconds: 0, frequency: 90, waveform: [] };
+          const position = sensorScenePosition(railroad.route.points, sensor);
           return (
-            <Line
-              key={`${reading.sensorId}-link`}
-              points={[start, end]}
-              color={sensor.color}
-              transparent
-              opacity={0.2 + reading.amplitude * 0.3}
-              lineWidth={1}
-            />
+            <group key={sensor.id} position={position} scale={VISUAL_EXAGGERATION.sensorScale}>
+              <Microphone sensor={sensor} reading={reading} selected={reading.amplitude > 0.45} />
+              <Html position={[0, 4.05, 0]} center distanceFactor={950} style={{ pointerEvents: "none" }}>
+                <div className="scene-sensor-label"><strong>{sensor.label}</strong><span>{reading.decibels} dB</span></div>
+              </Html>
+            </group>
           );
         })}
-    </>
+        <Environment preset="park" environmentIntensity={0.35} />
+        <CameraRig routeLength={railroad.route.length_m} />
+      </Canvas>
+    </div>
   );
-}
-
-function SceneContents({ readings, sourcePosition, trainState }: TrainSceneProps) {
-  const showWaves = useSimulationStore((state) => state.showWaves);
-  const showLinks = useSimulationStore((state) => state.showLinks);
-  const sourceEnabled = useSimulationStore((state) => state.sourceEnabled);
-  const selectedSensorId = useSimulationStore((state) => state.selectedSensorId);
-  const setSelectedSensorId = useSimulationStore(
-    (state) => state.setSelectedSensorId,
-  );
-
-  return (
-    <>
-      <color attach="background" args={["#050914"]} />
-      <fog attach="fog" args={["#050914", 12, 25]} />
-      <ambientLight intensity={0.75} />
-      <directionalLight
-        castShadow
-        position={[-5, 9, 4]}
-        intensity={2.3}
-        color="#d7e8ff"
-        shadow-mapSize={[1024, 1024]}
-      />
-      <Ground
-        readings={readings}
-        sourcePosition={sourcePosition}
-        showLinks={showLinks && sourceEnabled}
-      />
-      <Train trainState={trainState} />
-      {SENSOR_DEFINITIONS.map((sensor) => {
-        const reading = readings.find((item) => item.sensorId === sensor.id);
-        if (!reading) return null;
-        return (
-          <SensorMarker
-            key={sensor.id}
-            sensor={sensor}
-            reading={reading}
-            selected={selectedSensorId === sensor.id}
-            showWaves={showWaves && sourceEnabled}
-            onSelect={() => setSelectedSensorId(sensor.id)}
-          />
-        );
-      })}
-      {sourceEnabled && <SourceEmitter position={sourcePosition} />}
-    </>
-  );
-}
-
-export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneProps) {
-  const advanceTime = useSimulationStore((state) => state.advanceTime);
-  const isRunning = useSimulationStore((state) => state.isRunning);
-  const simulationSpeed = useSimulationStore((state) => state.simulationSpeed);
-  const frameAccumulatorRef = useRef(0);
-
-  return (
-    <Canvas
-      shadows
-      dpr={[1, 2]}
-      camera={{ position: [0, 8.8, 9.6], fov: 42, near: 0.1, far: 50 }}
-      onCreated={({ gl }) => {
-        gl.setClearColor("#050914");
-      }}
-    >
-      <SimulationClock
-        advanceTime={advanceTime}
-        frameAccumulatorRef={frameAccumulatorRef}
-        isRunning={isRunning}
-        simulationSpeed={simulationSpeed}
-      />
-      <SceneContents
-        readings={readings}
-        sourcePosition={sourcePosition}
-        trainState={trainState}
-      />
-      <OrbitControls
-        makeDefault
-        target={[0, 0, 0]}
-        minDistance={5}
-        maxDistance={18}
-        maxPolarAngle={Math.PI / 2.08}
-        minPolarAngle={0.32}
-        enableDamping
-      />
-    </Canvas>
-  );
-}
-
-function SimulationClock({
-  advanceTime,
-  frameAccumulatorRef,
-  isRunning,
-  simulationSpeed,
-}: {
-  advanceTime: (delta: number) => void;
-  frameAccumulatorRef: MutableRefObject<number>;
-  isRunning: boolean;
-  simulationSpeed: number;
-}) {
-  useFrame((_, delta) => {
-    if (!isRunning) return;
-    frameAccumulatorRef.current += delta;
-    if (frameAccumulatorRef.current >= 0.05) {
-      advanceTime(frameAccumulatorRef.current * simulationSpeed);
-      frameAccumulatorRef.current = 0;
-    }
-  });
-
-  return null;
 }

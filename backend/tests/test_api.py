@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from backend.alerts import VOICE_UNLOCK_TEXT
-from backend.main import create_app
+from backend.user_api import create_app
 from backend.settings import Settings
 
 

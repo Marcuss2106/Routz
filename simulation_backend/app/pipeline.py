@@ -1,4 +1,4 @@
-"""Accept synchronized chunks, localize on a 1 s buffer, and track the train."""
+"""Validate synchronized audio, localize on a trailing window, and estimate state."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from app.geometry import ANALYSIS_SAMPLES, MicrophonePosition
-from app.localization import estimate_rail_position_m
-from app.prediction import TrainTracker, prediction_from_track, unknown_prediction
-from app.schemas import CrossingPredictionEvent, MicrophoneAudioChunk
+from app.geometry import ANALYSIS_SAMPLES, MICROPHONES, MicrophonePosition
+from app.localization import LocalizationResult, estimate_rail_position_m
+from app.prediction import AcousticTrackEstimator, unknown_prediction
+from app.schemas import MicrophoneAudioChunk, TrainStateEstimateEvent
 
 logger = logging.getLogger("simulation_backend")
 
@@ -29,7 +29,7 @@ class _Session:
     last_time_s: float | None = None
     mic_ids: set[str] | None = None
     samples: dict[str, np.ndarray] = field(default_factory=dict)
-    tracker: TrainTracker = field(default_factory=TrainTracker)
+    estimator: AcousticTrackEstimator | None = None
 
 
 class SimulationPipeline:
@@ -56,6 +56,7 @@ class SimulationPipeline:
             session.samples = {
                 mic_id: np.zeros(0, dtype=np.float64) for mic_id in session.mic_ids
             }
+            session.estimator = AcousticTrackEstimator(chunk.simulation_id)
         for mic in chunk.microphones:
             samples = np.asarray(mic.samples(), dtype=np.float64)
             previous = session.samples[mic.id]
@@ -80,51 +81,45 @@ class SimulationPipeline:
         if session.last_time_s is not None and chunk.simulation_time_s <= session.last_time_s:
             return self._error(chunk, "non_monotonic_time")
 
-        mic_ids = {mic.id for mic in chunk.microphones}
-        if session.mic_ids is not None and mic_ids != session.mic_ids:
+        microphone_map = {mic.id: mic for mic in chunk.microphones}
+        expected_map = {mic.id: mic for mic in MICROPHONES}
+        if set(microphone_map) != set(expected_map):
             return self._error(chunk, "microphone_set_changed")
-
-        for mic in chunk.microphones:
-            samples = np.asarray(mic.samples(), dtype=np.float64)
+        for mic_id, expected in expected_map.items():
+            actual = microphone_map[mic_id]
+            if abs(actual.x_m - expected.x_m) > 1e-6 or abs(actual.y_m - expected.y_m) > 1e-6:
+                return self._error(chunk, "microphone_geometry_mismatch")
+            samples = np.asarray(actual.samples(), dtype=np.float64)
             if not np.isfinite(samples).all():
                 return self._error(chunk, "invalid_audio")
         return None
 
-    def _estimate(self, session: _Session, chunk: MicrophoneAudioChunk) -> CrossingPredictionEvent:
+    def _estimate(self, session: _Session, chunk: MicrophoneAudioChunk) -> TrainStateEstimateEvent:
+        analysis_duration_s = min(
+            ANALYSIS_SAMPLES,
+            len(next(iter(session.samples.values()), np.zeros(0))),
+        ) / chunk.sample_rate_hz
+        analysis_center_time_s = (
+            chunk.simulation_time_s + chunk.duration_ms / 1000.0 - analysis_duration_s / 2.0
+        )
         if any(len(session.samples[mic.id]) < ANALYSIS_SAMPLES for mic in chunk.microphones):
             return unknown_prediction(
                 simulation_id=chunk.simulation_id,
                 sequence=chunk.sequence,
-                simulation_time_s=chunk.simulation_time_s,
+                simulation_time_s=analysis_center_time_s,
             )
 
-        channels: list[np.ndarray] = []
-        microphones: list[MicrophonePosition] = []
-        for mic in chunk.microphones:
-            channels.append(session.samples[mic.id][-ANALYSIS_SAMPLES:])
-            microphones.append(
-                MicrophonePosition(mic.id, mic.x_m, chunk.ground_lateral_m(mic))
-            )
-        fix = estimate_rail_position_m(channels, microphones, chunk.sample_rate_hz)
-        if fix.position_m is None:
-            return unknown_prediction(
-                simulation_id=chunk.simulation_id,
-                sequence=chunk.sequence,
-                simulation_time_s=chunk.simulation_time_s,
-            )
-        snapshot = session.tracker.observe(chunk.simulation_time_s, fix.position_m)
-        if snapshot is None:
-            return unknown_prediction(
-                simulation_id=chunk.simulation_id,
-                sequence=chunk.sequence,
-                simulation_time_s=chunk.simulation_time_s,
-            )
-        return prediction_from_track(
-            simulation_id=chunk.simulation_id,
+        channels = [
+            session.samples[mic.id][-ANALYSIS_SAMPLES:]
+            for mic in chunk.microphones
+        ]
+        microphones = [MicrophonePosition(mic.id, mic.x_m, mic.y_m) for mic in chunk.microphones]
+        localization = estimate_rail_position_m(channels, microphones, chunk.sample_rate_hz)
+        assert session.estimator is not None
+        return session.estimator.observe(
             sequence=chunk.sequence,
-            simulation_time_s=chunk.simulation_time_s,
-            position_m=snapshot.position_m,
-            speed_mps=snapshot.speed_mps,
+            simulation_time_s=analysis_center_time_s,
+            localization=localization,
         )
 
     def _error(

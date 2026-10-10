@@ -49,5 +49,5 @@ class Settings:
             elevenlabs_voice_id=os.getenv("ELEVENLABS_VOICE_ID", _DEFAULT_VOICE_ID).strip()
             or _DEFAULT_VOICE_ID,
             host=os.getenv("USER_BACKEND_HOST", "0.0.0.0"),
-            port=int(os.getenv("USER_BACKEND_PORT", "8001")),
+            port=int(os.getenv("USER_BACKEND_PORT", "8002")),
         )

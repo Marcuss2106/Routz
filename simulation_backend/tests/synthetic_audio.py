@@ -1,7 +1,4 @@
-"""Build delayed, attenuated microphone audio for tests.
-
-`source_x_m` is used only to render the signals. Localization must not receive it.
-"""
+"""Synthetic microphone captures used only as hidden-truth test oracles."""
 
 from __future__ import annotations
 
@@ -18,6 +15,7 @@ from app.geometry import (
     SAMPLES_PER_CHUNK,
     SPEED_OF_SOUND_MPS,
     MicrophonePosition,
+    rail_point_at_s,
 )
 from app.schemas import MicrophoneAudioChunk, MicrophoneChunk
 
@@ -46,7 +44,7 @@ def train_source_mono(sample_rate_hz: int = SAMPLE_RATE_HZ) -> np.ndarray:
 
 
 def synthesize_window(
-    source_x_m: float,
+    source_s_m: float,
     t0_s: float,
     duration_s: float,
     snr_db: float,
@@ -54,12 +52,13 @@ def synthesize_window(
     microphones: tuple[MicrophonePosition, ...] = MICROPHONES,
     sample_rate_hz: int = SAMPLE_RATE_HZ,
 ) -> list[np.ndarray]:
-    """Simultaneous capture of one source fixed at `source_x_m` during the window."""
+    """Simultaneous capture of one point source on the shared rail."""
     source = train_source_mono(sample_rate_hz)
+    source_x_m, source_y_m = rail_point_at_s(source_s_m)
     sample_count = int(round(duration_s * sample_rate_hz))
     channels: list[np.ndarray] = []
     for mic in microphones:
-        distance_m = float(np.hypot(source_x_m - mic.x_m, mic.y_m))
+        distance_m = float(np.hypot(source_x_m - mic.x_m, source_y_m - mic.y_m))
         delay_s = distance_m / SPEED_OF_SOUND_MPS
         attenuation = 1.0 / max(distance_m, 1.0)
         times_s = t0_s + np.arange(sample_count) / sample_rate_hz
@@ -99,7 +98,7 @@ def chunks_from_window(
                         y_m=mic.y_m,
                         audio=channel[offset : offset + SAMPLES_PER_CHUNK].tolist(),
                     )
-                    for mic, channel in zip(microphones, channels, strict=True)
+                    for mic, channel in zip(microphones, channels)
                 ],
             )
         )
