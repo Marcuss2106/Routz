@@ -3,9 +3,6 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 const candidateFiles = [
   "train.wav",
   "130090__mr-tea__train-at-ford-plant-1.wav",

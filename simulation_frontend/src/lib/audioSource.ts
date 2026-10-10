@@ -16,7 +16,11 @@ export function useTrainAudioSource() {
   useEffect(() => {
     let cancelled = false;
     if (typeof window === "undefined" || !window.AudioContext) {
-      setSource((current) => ({ ...current, status: "fallback" }));
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setSource((current) => ({ ...current, status: "fallback" }));
+        }
+      });
       return;
     }
     const audioContext = new window.AudioContext();

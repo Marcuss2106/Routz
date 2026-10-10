@@ -295,7 +295,7 @@ export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneP
   const advanceTime = useSimulationStore((state) => state.advanceTime);
   const isRunning = useSimulationStore((state) => state.isRunning);
   const simulationSpeed = useSimulationStore((state) => state.simulationSpeed);
-  const frameAccumulator = useRef(0);
+  const frameAccumulatorRef = useRef(0);
 
   return (
     <Canvas
@@ -308,7 +308,7 @@ export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneP
     >
       <SimulationClock
         advanceTime={advanceTime}
-        frameAccumulator={frameAccumulator}
+        frameAccumulatorRef={frameAccumulatorRef}
         isRunning={isRunning}
         simulationSpeed={simulationSpeed}
       />
@@ -332,21 +332,21 @@ export function TrainScene({ readings, sourcePosition, trainState }: TrainSceneP
 
 function SimulationClock({
   advanceTime,
-  frameAccumulator,
+  frameAccumulatorRef,
   isRunning,
   simulationSpeed,
 }: {
   advanceTime: (delta: number) => void;
-  frameAccumulator: MutableRefObject<number>;
+  frameAccumulatorRef: MutableRefObject<number>;
   isRunning: boolean;
   simulationSpeed: number;
 }) {
   useFrame((_, delta) => {
     if (!isRunning) return;
-    frameAccumulator.current += delta;
-    if (frameAccumulator.current >= 0.05) {
-      advanceTime(frameAccumulator.current * simulationSpeed);
-      frameAccumulator.current = 0;
+    frameAccumulatorRef.current += delta;
+    if (frameAccumulatorRef.current >= 0.05) {
+      advanceTime(frameAccumulatorRef.current * simulationSpeed);
+      frameAccumulatorRef.current = 0;
     }
   });
 
