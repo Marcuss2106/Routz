@@ -145,7 +145,9 @@ class TrainStateEstimateEvent(BaseModel):
         return self.model_dump(mode="json")
 
     def user_backend_payload(self) -> dict:
-        return self.model_dump(mode="json", exclude={"track_position_m", "label"})
+        # track_position_m is an acoustic estimate (rail-local metres), not truth.
+        # The user backend needs it to anchor the demo train onto the map.
+        return self.model_dump(mode="json", exclude={"label"})
 
 
 # Compatibility name for publisher integrations that still import the old type.

@@ -90,6 +90,9 @@ class BlockagePrediction(BaseModel):
     ]
     trainId: str
     observedAt: datetime
+    # True while the train length is an occupancy-based provisional estimate,
+    # so blockEndUtc is a lower bound rather than a settled clearance time.
+    lengthProvisional: bool = False
 
 
 class EstimateConfidence(BaseModel):
@@ -104,6 +107,25 @@ class EstimateUncertainty(BaseModel):
     speed_mps: float | None = Field(default=None, ge=0)
     length_m: float | None = Field(default=None, ge=0)
     direction_deg: float | None = Field(default=None, ge=0)
+
+
+class MapState(BaseModel):
+    """Acoustic estimate re-expressed on the demo map corridor (simulated).
+
+    The acoustic rail is not on the real map, so the user backend applies the
+    fixed transform in ``backend.demo_anchor``. Raw acoustic values stay in the
+    canonical event fields.
+    """
+
+    anchor: str
+    label: Literal["simulated_demo_anchor"] = "simulated_demo_anchor"
+    position_reference: PositionReference = "front"
+    latitude: float
+    longitude: float
+    speed_mps: float | None = Field(default=None, ge=0)
+    direction_deg_from_east: float | None = Field(default=None, ge=0, le=360)
+    length_m: float | None = Field(default=None, ge=0, le=5000)
+    provisional_length_m: float | None = Field(default=None, ge=0, le=5000)
 
 
 class CrossingEstimate(BaseModel):
@@ -139,6 +161,7 @@ class TrainStateEstimate(BaseModel):
     label: Literal["simulated_acoustic_estimate"] = "simulated_acoustic_estimate"
     track_position_m: float | None = None
     crossings: list[CrossingEstimate] = Field(default_factory=list)
+    map_state: MapState | None = None
     predictions: list[BlockagePrediction] = Field(default_factory=list)
 
 

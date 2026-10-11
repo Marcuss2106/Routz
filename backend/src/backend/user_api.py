@@ -25,8 +25,9 @@ from backend.alerts import (
     StalePrediction,
 )
 from backend.crossings import FRA_CROSSINGS
+from backend.demo_anchor import ANCHOR_ID, anchor_estimate
 from backend.estimate_store import EstimateStore
-from backend.models import PredictionEnvelope, TrainObservation, TrainStateEstimate
+from backend.models import MapState, PredictionEnvelope, TrainObservation, TrainStateEstimate
 from backend.predict import predict_crossing_blockages
 from backend.route_speech import HELP_TEXT, parse_route_request, route_summary_text
 from backend.settings import Settings
@@ -104,30 +105,61 @@ def _audio_type(content_type: str | None) -> str | None:
 
 
 def _enrich_estimate(event: TrainStateEstimate) -> TrainStateEstimate:
-    """Add user-facing crossing predictions without adding simulator truth."""
+    """Anchor the acoustic estimate on the demo map and add crossing predictions.
+
+    Only acoustic estimates are used; no simulator truth reaches this function.
+    Raw acoustic fields are untouched. The map-framed values go in ``map_state``.
+    """
     if (
-        event.status in {"unknown", "cleared"}
+        event.status == "unknown"
+        or event.track_position_m is None
         or event.latitude is None
         or event.longitude is None
-        or event.speed_mps is None
-        or event.length_m is None
-        or event.direction_deg_from_east is None
     ):
-        return event.model_copy(update={"predictions": []})
+        return event.model_copy(update={"map_state": None, "predictions": []})
 
-    observed_at = datetime.now(timezone.utc)
+    anchored = anchor_estimate(
+        track_position_m=event.track_position_m,
+        speed_mps=event.speed_mps,
+        direction_deg_from_east=event.direction_deg_from_east,
+        length_m=event.length_m,
+        provisional_length_m=event.provisional_length_m,
+    )
+    map_state = MapState(
+        anchor=ANCHOR_ID,
+        latitude=anchored.latitude,
+        longitude=anchored.longitude,
+        speed_mps=anchored.speed_mps,
+        direction_deg_from_east=anchored.direction_deg_from_east,
+        length_m=anchored.length_m,
+        provisional_length_m=anchored.provisional_length_m,
+    )
+    length_m = anchored.length_m if anchored.length_m is not None else anchored.provisional_length_m
+    if (
+        event.status == "cleared"
+        or anchored.speed_mps is None
+        or anchored.direction_deg_from_east is None
+        or length_m is None
+        or length_m <= 0
+    ):
+        return event.model_copy(update={"map_state": map_state, "predictions": []})
+
     observation = TrainObservation(
         trainId=event.train_id,
-        observedAt=observed_at,
-        lat=event.latitude,
-        lon=event.longitude,
-        speedMps=event.speed_mps,
-        lengthM=event.length_m,
-        degFromEast=event.direction_deg_from_east,
-        positionReference="center",
+        observedAt=datetime.now(timezone.utc),
+        lat=anchored.latitude,
+        lon=anchored.longitude,
+        speedMps=anchored.speed_mps,
+        lengthM=length_m,
+        degFromEast=anchored.direction_deg_from_east,
+        positionReference="front",
     )
-    predictions = predict_crossing_blockages(observation, FRA_CROSSINGS)
-    return event.model_copy(update={"predictions": predictions})
+    provisional = anchored.length_m is None
+    predictions = [
+        prediction.model_copy(update={"lengthProvisional": provisional})
+        for prediction in predict_crossing_blockages(observation, FRA_CROSSINGS)
+    ]
+    return event.model_copy(update={"map_state": map_state, "predictions": predictions})
 
 
 def _remember(book: AlertBook, text: str) -> dict:

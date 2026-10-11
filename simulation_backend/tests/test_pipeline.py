@@ -170,7 +170,8 @@ def test_pipeline_timestamps_full_window_at_center_and_strips_truth(
     assert first_fix.frontend_message["label"] == "simulated_acoustic_estimate"
     assert "audio" not in first_fix.backend_message
     assert "train_position_m" not in first_fix.backend_message
-    assert "track_position_m" not in first_fix.backend_message
+    assert "label" not in first_fix.backend_message
+    assert first_fix.backend_message["track_position_m"] == first_fix.frontend_message["track_position_m"]
     assert "simulation_id=buffer-demo" in caplog.text
 
 

@@ -63,6 +63,11 @@ export interface BlockagePrediction {
   status: BlockageStatus;
   trainId: string;
   observedAt: string;
+  /**
+   * True while the train length is an occupancy-based provisional acoustic
+   * estimate, so blockEndUtc is a lower bound on when the crossing reopens.
+   */
+  lengthProvisional?: boolean;
 }
 
 export interface PredictOptions {
