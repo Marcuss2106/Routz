@@ -115,3 +115,41 @@ Treat only `observations/` (and explicitly chosen nullable `measured_*` columns)
 Split train/validation/test data by complete `run_id`, never by individual rows. Row-level random splitting puts adjacent timestamps from the same journey into multiple splits and creates severe temporal and route-plan leakage. Fit preprocessing statistics using training runs only. For stronger generalization tests, also hold out route IDs, destination regions, or departure-time ranges.
 
 The generator records every per-run seed in the manifest. Reuse the same master seed and arguments for exact deterministic motion/route content; creation timestamps and elapsed-time reporting are intentionally not deterministic.
+
+## Rail pathfinder baseline and evaluation
+
+Routez includes a destination-blind graph baseline in
+`backend.rail_pathfinder`. It accepts one observable fix (WGS84 position,
+compass heading clockwise from north, and speed), snaps it to the saved rail
+graph, and returns up to three likely paths with positions at the dataset's
+prediction horizons. At a switch, the default ranking favors the smallest
+heading change.
+
+Evaluate a generated dataset with:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m backend.pathfinder_evaluation \
+  datasets/columbia-v1 \
+  --output datasets/columbia-v1/pathfinder-report.json
+```
+
+or, when installed with `uv`:
+
+```bash
+uv run evaluate-train-pathfinder datasets/columbia-v1 \
+  --output datasets/columbia-v1/pathfinder-report.json
+```
+
+The evaluator splits complete runs 70/15/15 using a stable hash of `run_id`.
+It reports top-1 branch accuracy, top-2 branch coverage, Brier score, and
+future-position MAE/RMSE at each horizon for truth and noisy measurements.
+It also fits simple per-switch branch frequencies on the training runs. That
+probabilistic model is selected only when validation top-1 accuracy beats the
+heading baseline by more than one percentage point, or its Brier score improves
+by at least five percent without reducing top-1 accuracy.
+
+The current generator chooses a random hidden destination. Exact branch intent
+is therefore not always identifiable from position, heading, and speed. Treat
+candidate paths as probabilities, not certainty. The evaluator never exposes
+destination, planned edge sequences, replay metadata, or future labels to the
+predictor.

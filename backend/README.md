@@ -112,4 +112,16 @@ Read selected columns and reconstruct one complete run without loading a model:
 PYTHONPATH=src .venv/bin/python read_dataset.py datasets/columbia-v1 --batch-size 8
 ```
 
+Score the destination-blind rail pathfinder on the generated data:
+
+```bash
+uv run evaluate-train-pathfinder datasets/columbia-v1 \
+  --output datasets/columbia-v1/pathfinder-report.json
+```
+
+The report compares a heading-based graph rollout with optional branch
+frequency priors learned only from training runs. It includes branch top-1,
+top-2, calibration, and future-position errors for true and noisy inputs.
+Hidden destinations and planned routes are never predictor features.
+
 See [`DATASET_GUIDE.md`](DATASET_GUIDE.md) for schemas, leakage boundaries, replay reconstruction, assumptions, and the complete file layout.
