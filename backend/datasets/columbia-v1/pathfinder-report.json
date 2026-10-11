@@ -1,0 +1,282 @@
+{
+  "dataset": "/home/marcus-sostak/Routz/backend/datasets/columbia-v1",
+  "split_policy": "sha256(run_id), 70% train / 15% validation / 15% test",
+  "evaluated_rows_per_split_limit": 50000,
+  "learned_branch_prior_keys": 67,
+  "selection": {
+    "selected_model": "frequency_priors",
+    "rule": "select frequency priors when validation top-1 improves by >0.01, or Brier score improves by >=5% without reducing top-1"
+  },
+  "validation": {
+    "heading_baseline": {
+      "rows": 50000,
+      "rejected_fixes": 0,
+      "branch": {
+        "count": 6993,
+        "top1_accuracy": 0.5662805662805663,
+        "top2_coverage": 0.7727727727727728,
+        "brier_score": 0.6138041268395757
+      },
+      "future_position": {
+        "5s": {
+          "count": 49200,
+          "mae_m": 4.526276851558573,
+          "rmse_m": 10.989941144232732
+        },
+        "15s": {
+          "count": 47600,
+          "mae_m": 35.94858847414433,
+          "rmse_m": 57.48021517292696
+        },
+        "30s": {
+          "count": 45200,
+          "mae_m": 116.05628264531396,
+          "rmse_m": 155.46343147530723
+        }
+      },
+      "stopped_future_position": {
+        "5s": {
+          "count": 6468,
+          "mae_m": 0.4269709026889538,
+          "rmse_m": 1.291077549124706
+        },
+        "15s": {
+          "count": 6168,
+          "mae_m": 9.992882246673453,
+          "rmse_m": 18.87197366889662
+        },
+        "30s": {
+          "count": 5706,
+          "mae_m": 65.93793285788382,
+          "rmse_m": 98.47705696727436
+        }
+      }
+    },
+    "frequency_priors": {
+      "rows": 50000,
+      "rejected_fixes": 0,
+      "branch": {
+        "count": 6993,
+        "top1_accuracy": 0.8100958100958101,
+        "top2_coverage": 0.8442728442728443,
+        "brier_score": 0.261726045232109
+      },
+      "future_position": {
+        "5s": {
+          "count": 49200,
+          "mae_m": 3.901243903587844,
+          "rmse_m": 6.175690655364891
+        },
+        "15s": {
+          "count": 47600,
+          "mae_m": 31.779720508214943,
+          "rmse_m": 42.93691342139591
+        },
+        "30s": {
+          "count": 45200,
+          "mae_m": 105.62632175198394,
+          "rmse_m": 134.0172418007268
+        }
+      },
+      "stopped_future_position": {
+        "5s": {
+          "count": 6468,
+          "mae_m": 0.4269709026889538,
+          "rmse_m": 1.291077549124706
+        },
+        "15s": {
+          "count": 6168,
+          "mae_m": 9.992882246673453,
+          "rmse_m": 18.87197366889662
+        },
+        "30s": {
+          "count": 5706,
+          "mae_m": 65.93793285788382,
+          "rmse_m": 98.47705696727436
+        }
+      }
+    }
+  },
+  "test": {
+    "heading_baseline": {
+      "truth_inputs": {
+        "rows": 50000,
+        "rejected_fixes": 0,
+        "branch": {
+          "count": 7150,
+          "top1_accuracy": 0.5156643356643357,
+          "top2_coverage": 0.8173426573426573,
+          "brier_score": 0.6454155721637809
+        },
+        "future_position": {
+          "5s": {
+            "count": 49200,
+            "mae_m": 4.44208791942917,
+            "rmse_m": 8.842355398065097
+          },
+          "15s": {
+            "count": 47600,
+            "mae_m": 36.338847625712276,
+            "rmse_m": 55.371120292116686
+          },
+          "30s": {
+            "count": 45200,
+            "mae_m": 119.88479153395191,
+            "rmse_m": 163.91834092058843
+          }
+        },
+        "stopped_future_position": {
+          "5s": {
+            "count": 6135,
+            "mae_m": 0.41274618765471244,
+            "rmse_m": 1.2465475182969041
+          },
+          "15s": {
+            "count": 5944,
+            "mae_m": 9.385395758211638,
+            "rmse_m": 18.0718482209589
+          },
+          "30s": {
+            "count": 5734,
+            "mae_m": 56.43250005550778,
+            "rmse_m": 88.352033195081
+          }
+        }
+      },
+      "measured_inputs": {
+        "rows": 50000,
+        "rejected_fixes": 0,
+        "branch": {
+          "count": 7150,
+          "top1_accuracy": 0.4853146853146853,
+          "top2_coverage": 0.740979020979021,
+          "brier_score": 0.6757634300142795
+        },
+        "future_position": {
+          "5s": {
+            "count": 49200,
+            "mae_m": 6.013151796155028,
+            "rmse_m": 10.63757776442578
+          },
+          "15s": {
+            "count": 47600,
+            "mae_m": 38.66166210126703,
+            "rmse_m": 58.98478851773345
+          },
+          "30s": {
+            "count": 45200,
+            "mae_m": 122.93351634188912,
+            "rmse_m": 168.1790656297549
+          }
+        },
+        "stopped_future_position": {
+          "5s": {
+            "count": 6135,
+            "mae_m": 2.9036877396651715,
+            "rmse_m": 3.601877845735844
+          },
+          "15s": {
+            "count": 5944,
+            "mae_m": 10.973187563212674,
+            "rmse_m": 17.898702850433796
+          },
+          "30s": {
+            "count": 5734,
+            "mae_m": 56.875379783769915,
+            "rmse_m": 87.12129585973045
+          }
+        }
+      }
+    },
+    "frequency_priors": {
+      "truth_inputs": {
+        "rows": 50000,
+        "rejected_fixes": 0,
+        "branch": {
+          "count": 7150,
+          "top1_accuracy": 0.6661538461538462,
+          "top2_coverage": 0.8716083916083917,
+          "brier_score": 0.3596645183786134
+        },
+        "future_position": {
+          "5s": {
+            "count": 49200,
+            "mae_m": 4.187442273573568,
+            "rmse_m": 7.540160939848742
+          },
+          "15s": {
+            "count": 47600,
+            "mae_m": 33.64723060976822,
+            "rmse_m": 48.326979846031655
+          },
+          "30s": {
+            "count": 45200,
+            "mae_m": 110.3090266321541,
+            "rmse_m": 142.4136286583537
+          }
+        },
+        "stopped_future_position": {
+          "5s": {
+            "count": 6135,
+            "mae_m": 0.41274618765471244,
+            "rmse_m": 1.2465475182969041
+          },
+          "15s": {
+            "count": 5944,
+            "mae_m": 9.385395758211638,
+            "rmse_m": 18.0718482209589
+          },
+          "30s": {
+            "count": 5734,
+            "mae_m": 56.43250005550778,
+            "rmse_m": 88.352033195081
+          }
+        }
+      },
+      "measured_inputs": {
+        "rows": 50000,
+        "rejected_fixes": 0,
+        "branch": {
+          "count": 7150,
+          "top1_accuracy": 0.587972027972028,
+          "top2_coverage": 0.7900699300699301,
+          "brier_score": 0.4364234471098244
+        },
+        "future_position": {
+          "5s": {
+            "count": 49200,
+            "mae_m": 5.882296233735225,
+            "rmse_m": 10.411392025733452
+          },
+          "15s": {
+            "count": 47600,
+            "mae_m": 36.33541870294061,
+            "rmse_m": 53.46434117501762
+          },
+          "30s": {
+            "count": 45200,
+            "mae_m": 114.1039327682369,
+            "rmse_m": 148.92400068447137
+          }
+        },
+        "stopped_future_position": {
+          "5s": {
+            "count": 6135,
+            "mae_m": 2.9036877396651897,
+            "rmse_m": 3.6018778457358454
+          },
+          "15s": {
+            "count": 5944,
+            "mae_m": 10.973187563212674,
+            "rmse_m": 17.898702850433796
+          },
+          "30s": {
+            "count": 5734,
+            "mae_m": 56.875379783769915,
+            "rmse_m": 87.12129585973045
+          }
+        }
+      }
+    }
+  }
+}

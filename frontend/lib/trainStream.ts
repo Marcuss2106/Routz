@@ -1,19 +1,74 @@
 "use client";
 
 /**
- * Live train-prediction link between the Routz frontend and user-backend.
+ * Live train link between the Routz frontend and user backend.
  *
- * - POST observations to `<ROUTZ_API_URL>/api/train-observations`
- * - Stream prediction envelopes from `<ROUTZ_API_URL>/api/events` (SSE)
- *
- * When no backend URL is configured the app falls back to local-only
- * prediction (see lib/trains.ts) so the demo still works offline.
+ * Live inference uses the canonical train_state_estimate WebSocket event.
+ * The older observation POST remains available for the manual demo panel.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { parseTrainObservation, type BlockagePrediction, type TrainObservation } from "./trains";
 
 export type LiveStatus = "disabled" | "connecting" | "connected" | "offline";
+
+export interface EstimateConfidence {
+  position: number;
+  speed: number;
+  length: number;
+  direction: number;
+}
+
+export interface EstimateUncertainty {
+  position_m: number | null;
+  speed_mps: number | null;
+  length_m: number | null;
+  direction_deg: number | null;
+}
+
+export type EstimateStatus = "detected" | "tracking" | "length_pending" | "cleared" | "unknown";
+
+/** The acoustic estimate re-expressed on the demo map corridor (simulated). */
+export interface MapState {
+  anchor: string;
+  label: "simulated_demo_anchor";
+  position_reference: "front" | "center" | "rear";
+  latitude: number;
+  longitude: number;
+  speed_mps: number | null;
+  direction_deg_from_east: number | null;
+  length_m: number | null;
+  provisional_length_m: number | null;
+}
+
+export interface TrainStateEstimateEvent {
+  type: "train_state_estimate";
+  simulation_id: string;
+  sequence: number;
+  simulation_time_s: number;
+  train_id: string;
+  track_id: string;
+  latitude: number | null;
+  longitude: number | null;
+  speed_mps: number | null;
+  length_m: number | null;
+  provisional_length_m: number | null;
+  direction_deg_from_east: number | null;
+  status: EstimateStatus;
+  confidence: EstimateConfidence;
+  uncertainty: EstimateUncertainty;
+  source: "acoustic_array";
+  label: "simulated_acoustic_estimate";
+  track_position_m?: number | null;
+  crossings: Array<{
+    crossing_id: string;
+    eta_seconds: number | null;
+    estimated_blockage_seconds: number | null;
+    status: "approaching" | "blocking" | "clear" | "unknown";
+  }>;
+  map_state: MapState | null;
+  predictions: BlockagePrediction[];
+}
 
 export interface PredictionEnvelope {
   type: "predictions";
@@ -22,18 +77,26 @@ export interface PredictionEnvelope {
   stale: boolean;
 }
 
-/** Backend base URL, e.g. http://localhost:8001. Empty = live mode disabled. */
+/** Backend base URL. Empty = live mode disabled. */
 export function getRoutzApiUrl(): string {
-  return (process.env.NEXT_PUBLIC_ROUTZ_API_URL ?? "").trim().replace(/\/+$/, "");
+  return (
+    process.env.NEXT_PUBLIC_ROUTZ_API_URL ?? process.env.NEXT_PUBLIC_USER_API_URL ?? ""
+  ).trim().replace(/\/+$/, "");
 }
 
-/** Validate an SSE/POST envelope payload (throws on invalid). */
-export function parseEnvelope(raw: unknown): PredictionEnvelope {
-  if (typeof raw !== "object" || raw === null) throw new Error("Envelope must be an object.");
-  const e = raw as Record<string, unknown>;
-  const observation = parseTrainObservation(e.observation);
-  const preds = Array.isArray(e.predictions) ? e.predictions : [];
-  const predictions: BlockagePrediction[] = preds.map((p) => {
+export function getRoutzWsUrl(): string {
+  const configured = (process.env.NEXT_PUBLIC_ROUTZ_WS_URL ?? process.env.NEXT_PUBLIC_USER_WS_URL ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (configured) return configured;
+  const api = getRoutzApiUrl();
+  if (!api) return "";
+  return api.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:") + "/ws/updates";
+}
+
+function parsePredictions(raw: unknown, fallbackTrainId: string, fallbackObservedAt: string): BlockagePrediction[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((p) => {
     const o = p as Record<string, unknown>;
     const blockStartUtc = String(o.blockStartUtc ?? "");
     const blockEndUtc = String(o.blockEndUtc ?? "");
@@ -55,19 +118,130 @@ export function parseEnvelope(raw: unknown): PredictionEnvelope {
       distanceM: Number(o.distanceM ?? 0),
       lateralM: Number(o.lateralM ?? 0),
       status: String(o.status ?? "unknown") as BlockagePrediction["status"],
-      trainId: String(o.trainId ?? observation.trainId),
-      observedAt: String(o.observedAt ?? observation.observedAt),
+      trainId: String(o.trainId ?? fallbackTrainId),
+      observedAt: String(o.observedAt ?? fallbackObservedAt),
+      lengthProvisional: Boolean(o.lengthProvisional),
     };
   });
+}
+
+/** Validate the retained manual REST envelope. */
+export function parseEnvelope(raw: unknown): PredictionEnvelope {
+  if (typeof raw !== "object" || raw === null) throw new Error("Envelope must be an object.");
+  const e = raw as Record<string, unknown>;
+  const observation = parseTrainObservation(e.observation);
   return {
     type: "predictions",
     observation,
-    predictions,
+    predictions: parsePredictions(e.predictions, observation.trainId, observation.observedAt),
     stale: Boolean(e.stale),
   };
 }
 
-/** POST an observation; the backend computes + broadcasts predictions. */
+function numberOrNull(value: unknown): number | null {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function parseMapState(raw: unknown): MapState | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const latitude = Number(m.latitude);
+  const longitude = Number(m.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const reference = String(m.position_reference ?? "front");
+  return {
+    anchor: String(m.anchor ?? ""),
+    label: "simulated_demo_anchor",
+    position_reference:
+      reference === "center" || reference === "rear" ? reference : "front",
+    latitude,
+    longitude,
+    speed_mps: numberOrNull(m.speed_mps),
+    direction_deg_from_east: numberOrNull(m.direction_deg_from_east),
+    length_m: numberOrNull(m.length_m),
+    provisional_length_m: numberOrNull(m.provisional_length_m),
+  };
+}
+
+/** Validate the one canonical event used by the acoustic map. */
+export function parseTrainStateEstimate(raw: unknown): TrainStateEstimateEvent {
+  if (typeof raw !== "object" || raw === null) throw new Error("Estimate must be an object.");
+  const e = raw as Record<string, unknown>;
+  if (e.type !== "train_state_estimate") throw new Error("Unsupported live event.");
+  const confidence = e.confidence as Record<string, unknown>;
+  const uncertainty = e.uncertainty as Record<string, unknown>;
+  if (!confidence || !uncertainty) throw new Error("Estimate confidence is missing.");
+  const simulationId = String(e.simulation_id ?? "");
+  const trainId = String(e.train_id ?? "");
+  if (!simulationId || !trainId) throw new Error("Estimate identity is missing.");
+  const observedAt = new Date().toISOString();
+  return {
+    type: "train_state_estimate",
+    simulation_id: simulationId,
+    sequence: Number(e.sequence ?? 0),
+    simulation_time_s: Number(e.simulation_time_s ?? 0),
+    train_id: trainId,
+    track_id: String(e.track_id ?? ""),
+    latitude: numberOrNull(e.latitude),
+    longitude: numberOrNull(e.longitude),
+    speed_mps: numberOrNull(e.speed_mps),
+    length_m: numberOrNull(e.length_m),
+    provisional_length_m: numberOrNull(e.provisional_length_m),
+    direction_deg_from_east: numberOrNull(e.direction_deg_from_east),
+    status: String(e.status ?? "unknown") as EstimateStatus,
+    confidence: {
+      position: Number(confidence.position ?? 0),
+      speed: Number(confidence.speed ?? 0),
+      length: Number(confidence.length ?? 0),
+      direction: Number(confidence.direction ?? 0),
+    },
+    uncertainty: {
+      position_m: numberOrNull(uncertainty.position_m),
+      speed_mps: numberOrNull(uncertainty.speed_mps),
+      length_m: numberOrNull(uncertainty.length_m),
+      direction_deg: numberOrNull(uncertainty.direction_deg),
+    },
+    source: "acoustic_array",
+    label: "simulated_acoustic_estimate",
+    track_position_m: numberOrNull(e.track_position_m),
+    crossings: Array.isArray(e.crossings) ? (e.crossings as TrainStateEstimateEvent["crossings"]) : [],
+    map_state: parseMapState(e.map_state),
+    predictions: parsePredictions(e.predictions, trainId, observedAt),
+  };
+}
+
+/**
+ * Convert a rich estimate into the map/panel observation shape.
+ *
+ * The raw acoustic latitude/longitude live on the acoustic demo rail, which is
+ * not on the real map. The user backend publishes `map_state` after applying
+ * its documented demo anchor, so that is what the map draws. While the length
+ * is unknown the marker uses a 1 m placeholder; no prediction depends on it,
+ * because predictions come from the user backend.
+ */
+export function estimateToObservation(event: TrainStateEstimateEvent): TrainObservation | null {
+  const map = event.map_state;
+  if (
+    !map ||
+    map.speed_mps === null ||
+    map.direction_deg_from_east === null
+  ) {
+    return null;
+  }
+  const length = map.length_m ?? map.provisional_length_m ?? 1;
+  return parseTrainObservation({
+    trainId: event.train_id,
+    observedAt: new Date().toISOString(),
+    lat: map.latitude,
+    lon: map.longitude,
+    speedMps: map.speed_mps,
+    lengthM: Math.max(1, length),
+    degFromEast: map.direction_deg_from_east,
+    positionReference: map.position_reference,
+  });
+}
+
+/** POST an observation for the manual compatibility panel. */
 export async function postTrainObservation(obs: TrainObservation): Promise<PredictionEnvelope> {
   const base = getRoutzApiUrl();
   if (!base) throw new Error("Live backend not configured.");
@@ -83,50 +257,57 @@ export async function postTrainObservation(obs: TrainObservation): Promise<Predi
   return parseEnvelope(await res.json());
 }
 
-/**
- * Subscribe to the backend SSE stream. Calls onEnvelope for every
- * `predictions` event (including the connect-time snapshot).
- * Returns the connection status for UI display.
- */
-export function useTrainStream(onEnvelope: (env: PredictionEnvelope) => void): LiveStatus {
+/** Subscribe to canonical acoustic estimates over WebSocket. */
+export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | null) => void): LiveStatus {
   const [status, setStatus] = useState<LiveStatus>(() =>
     getRoutzApiUrl() ? "connecting" : "disabled"
   );
-  const handlerRef = useRef(onEnvelope);
-  handlerRef.current = onEnvelope;
+  const handlerRef = useRef(onEstimate);
+  useEffect(() => {
+    handlerRef.current = onEstimate;
+  }, [onEstimate]);
 
   useEffect(() => {
-    const base = getRoutzApiUrl();
-    if (!base || typeof EventSource === "undefined") {
-      setStatus(getRoutzApiUrl() ? "offline" : "disabled");
+    const url = getRoutzWsUrl();
+    if (!url || typeof WebSocket === "undefined") {
       return;
     }
-    setStatus("connecting");
-    const es = new EventSource(`${base}/api/events`);
 
-    const onPredictions = (ev: MessageEvent) => {
-      try {
-        const env = parseEnvelope(JSON.parse(String(ev.data)));
-        setStatus("connected");
-        handlerRef.current(env);
-      } catch {
-        // Ignore malformed events; the next one will resync.
-      }
-    };
-    const onHello = () => setStatus("connected");
-    const onError = () => {
-      // EventSource auto-reconnects; surface the dip so the UI can note it.
-      setStatus((s) => (s === "connected" ? "connecting" : "offline"));
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const connect = () => {
+      if (stopped) return;
+      setStatus("connecting");
+      socket = new WebSocket(url);
+      socket.onopen = () => setStatus("connected");
+      socket.onmessage = (message) => {
+        try {
+          const raw = JSON.parse(String(message.data)) as Record<string, unknown>;
+          if (raw.type === "simulation_reset") {
+            handlerRef.current(null);
+            return;
+          }
+          if (raw.type !== "train_state_estimate") return;
+          handlerRef.current(parseTrainStateEstimate(raw));
+        } catch {
+          // Ignore malformed events; the reconnect snapshot resynchronizes state.
+        }
+      };
+      socket.onerror = () => setStatus("offline");
+      socket.onclose = () => {
+        if (stopped) return;
+        setStatus("offline");
+        reconnectTimer = setTimeout(connect, 1500);
+      };
     };
 
-    es.addEventListener("predictions", onPredictions as EventListener);
-    es.addEventListener("hello", onHello as EventListener);
-    es.addEventListener("error", onError);
+    connect();
     return () => {
-      es.removeEventListener("predictions", onPredictions as EventListener);
-      es.removeEventListener("hello", onHello as EventListener);
-      es.removeEventListener("error", onError);
-      es.close();
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
     };
   }, []);
 

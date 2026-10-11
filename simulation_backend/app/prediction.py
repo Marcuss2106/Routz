@@ -142,8 +142,10 @@ class LifecycleSnapshot:
     train_id: str
     status: Literal["detected", "tracking", "length_pending", "cleared", "unknown"]
     length_m: float | None
+    provisional_length_m: float | None
     length_confidence: float
     length_error_m: float | None
+    provisional_length_error_m: float | None
     active: bool
     new_train: bool
 
@@ -212,13 +214,21 @@ class TrainLifecycleTracker:
                 self._stable_length_m = self._provisional_length(elapsed_s)
                 self._status = "cleared"
 
+        provisional = None
+        if self._active and self._first_active_time is not None and self._last_active_time is not None:
+            provisional = self._provisional_length(
+                max(0.0, self._last_active_time - self._first_active_time)
+            )
         length_error = None if self._stable_length_m is None else max(5.0, self._stable_length_m * 0.18)
+        provisional_error = None if provisional is None else max(8.0, provisional * 0.25)
         return LifecycleSnapshot(
             train_id=self.train_id,
             status=self._status,
             length_m=self._stable_length_m,
+            provisional_length_m=provisional if self._stable_length_m is None else None,
             length_confidence=0.85 if self._stable_length_m is not None else 0.0,
             length_error_m=length_error,
+            provisional_length_error_m=provisional_error if self._stable_length_m is None else None,
             active=self._active,
             new_train=new_train,
         )
@@ -387,6 +397,7 @@ def estimate_event(
         longitude=longitude,
         speed_mps=speed_mps,
         length_m=lifecycle.length_m,
+        provisional_length_m=lifecycle.provisional_length_m,
         direction_deg_from_east=direction,
         status=status,
         confidence=EstimateConfidence(
@@ -398,7 +409,11 @@ def estimate_event(
         uncertainty=EstimateUncertainty(
             position_m=localization.position_error_m,
             speed_mps=snapshot.speed_error_mps if snapshot else None,
-            length_m=lifecycle.length_error_m,
+            length_m=(
+                lifecycle.length_error_m
+                if lifecycle.length_error_m is not None
+                else lifecycle.provisional_length_error_m
+            ),
             direction_deg=snapshot.direction_error_deg if snapshot else None,
         ),
         track_position_m=track_position_m,
@@ -433,8 +448,10 @@ def prediction_from_track(
         train_id=f"{TRAIN_ID_PREFIX}-{simulation_id}-001",
         status="tracking" if length_m is not None else "length_pending",
         length_m=length_m,
+        provisional_length_m=None,
         length_confidence=0.85 if length_m is not None else 0.0,
         length_error_m=length_m * 0.18 if length_m is not None else None,
+        provisional_length_error_m=None,
         active=position_m is not None,
         new_train=False,
     )
@@ -455,8 +472,10 @@ def unknown_prediction(*, simulation_id: str, sequence: int, simulation_time_s: 
         train_id=f"{TRAIN_ID_PREFIX}-{simulation_id}-001",
         status="unknown",
         length_m=None,
+        provisional_length_m=None,
         length_confidence=0.0,
         length_error_m=None,
+        provisional_length_error_m=None,
         active=False,
         new_train=False,
     )

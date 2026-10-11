@@ -1,3 +1,5 @@
+import pytest
+
 from fastapi.testclient import TestClient
 
 from backend.alerts import VOICE_UNLOCK_TEXT
@@ -37,6 +39,30 @@ def _prediction(sequence: int = 1, status: str = "approaching") -> dict:
             }
         ],
         "source": "simulated_audio_inference",
+    }
+
+
+def _estimate(sequence: int = 1) -> dict:
+    return {
+        "type": "train_state_estimate",
+        "simulation_id": "acoustic-demo",
+        "sequence": sequence,
+        "simulation_time_s": float(sequence),
+        "train_id": "acoustic-train-001",
+        "track_id": "acoustic-track-001",
+        "latitude": 34.0007,
+        "longitude": -81.0348,
+        "speed_mps": 12.0,
+        "length_m": 140.0,
+        "provisional_length_m": None,
+        "direction_deg_from_east": 0.0,
+        "status": "tracking",
+        "confidence": {"position": 0.91, "speed": 0.84, "length": 0.62, "direction": 0.97},
+        "uncertainty": {"position_m": 6.5, "speed_mps": 0.8, "length_m": 18.0, "direction_deg": 4.0},
+        "source": "acoustic_array",
+        "label": "simulated_acoustic_estimate",
+        "track_position_m": 120.0,
+        "crossings": [],
     }
 
 
@@ -134,3 +160,138 @@ def test_websocket_receives_the_latest_alert() -> None:
     assert message["type"] == "route_update"
     assert message["label"] == "estimate"
     assert message["alert"]["text"].startswith("Simulation. crossing 001")
+
+
+def test_canonical_acoustic_estimate_is_replayed_and_resettable() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    accepted = client.post("/api/predictions", json=_estimate(4), headers=headers)
+    assert accepted.status_code == 200
+    event = accepted.json()["event"]
+    assert event["type"] == "train_state_estimate"
+    assert event["source"] == "acoustic_array"
+    assert event["length_m"] == 140.0
+    with client.websocket_connect("/ws/updates") as websocket:
+        replay = websocket.receive_json()
+    assert replay["type"] == "train_state_estimate"
+    assert replay["sequence"] == 4
+
+    reset = client.post(
+        "/api/predictions",
+        json={"type": "simulation_reset", "simulation_id": "acoustic-demo"},
+        headers=headers,
+    )
+    assert reset.status_code == 200
+    restarted = client.post("/api/predictions", json=_estimate(0), headers=headers)
+    assert restarted.status_code == 200
+
+
+def _moving_estimate(sequence: int, **overrides: object) -> dict:
+    event = _estimate(sequence)
+    event.update(
+        {
+            "simulation_id": "anchor-demo",
+            "status": "length_pending",
+            "speed_mps": 28.9,
+            "length_m": None,
+            "provisional_length_m": 200.0,
+            "direction_deg_from_east": 0.0,
+            "track_position_m": 0.0,
+        }
+    )
+    event.update(overrides)
+    return event
+
+
+def test_acoustic_estimate_is_anchored_on_real_crossings_and_spoken_by_name() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    response = client.post("/api/predictions", json=_moving_estimate(1), headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    event = body["event"]
+
+    # The raw acoustic fields are unchanged; map values live in map_state.
+    assert event["speed_mps"] == 28.9
+    assert event["map_state"]["anchor"] == "demo-corridor-greene-laurel"
+    assert event["map_state"]["position_reference"] == "front"
+    assert event["map_state"]["speed_mps"] == pytest.approx(16.0, abs=0.1)
+    assert event["map_state"]["length_m"] is None
+
+    by_road = {p["roadName"]: p for p in event["predictions"]}
+    assert {"Hampton St", "Taylor St", "Blanding St", "Laurel St"} <= set(by_road)
+    hampton = by_road["Hampton St"]
+    assert hampton["status"] == "blocked_soon"
+    assert hampton["lengthProvisional"] is True
+    assert 8 <= hampton["etaSeconds"] <= 18
+    assert body["alert"]["text"].startswith("Simulation. Hampton St is predicted to close")
+
+
+def test_estimate_without_track_position_gets_no_map_predictions() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    response = client.post(
+        "/api/predictions",
+        json=_moving_estimate(1, track_position_m=None),
+        headers=headers,
+    )
+    event = response.json()["event"]
+    assert event["map_state"] is None
+    assert event["predictions"] == []
+
+
+def test_cleared_estimate_has_map_state_but_no_predictions() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    response = client.post(
+        "/api/predictions",
+        json=_moving_estimate(1, status="cleared", length_m=150.0, provisional_length_m=None),
+        headers=headers,
+    )
+    event = response.json()["event"]
+    assert event["map_state"]["length_m"] == pytest.approx(150.0 * 800 / (1083.095 + 360), rel=1e-3)
+    assert event["predictions"] == []
+
+
+def test_provisional_flag_clears_once_length_is_settled() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    response = client.post(
+        "/api/predictions",
+        json=_moving_estimate(1, status="tracking", length_m=150.0, provisional_length_m=None),
+        headers=headers,
+    )
+    predictions = response.json()["event"]["predictions"]
+    assert predictions and all(p["lengthProvisional"] is False for p in predictions)
+
+
+def test_tracking_dropout_does_not_announce_a_clearance() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    first = client.post("/api/predictions", json=_moving_estimate(1), headers=headers)
+    assert first.json()["alert"]["text"].startswith("Simulation. Hampton St")
+
+    dropout = client.post(
+        "/api/predictions",
+        json=_moving_estimate(2, status="unknown", track_position_m=None, speed_mps=None),
+        headers=headers,
+    )
+    assert dropout.status_code == 200
+    assert dropout.json()["alert"] is None
+
+    stale = client.post(
+        "/api/predictions",
+        json=_moving_estimate(2, status="unknown", track_position_m=None, speed_mps=None),
+        headers=headers,
+    )
+    assert stale.status_code == 409
+
+    resumed = client.post("/api/predictions", json=_moving_estimate(3), headers=headers)
+    assert resumed.json()["alert"] is None  # same situation: not spoken again
+
+    cleared = client.post(
+        "/api/predictions",
+        json=_moving_estimate(4, status="cleared", length_m=150.0, provisional_length_m=None),
+        headers=headers,
+    )
+    assert cleared.json()["alert"]["text"] == "Simulation. The predicted crossing blockage has cleared."

@@ -7,6 +7,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -23,6 +24,11 @@ from backend.alerts import (
     SpokenAlert,
     StalePrediction,
 )
+from backend.crossings import FRA_CROSSINGS
+from backend.demo_anchor import ANCHOR_ID, anchor_estimate
+from backend.estimate_store import EstimateStore
+from backend.models import MapState, PredictionEnvelope, TrainObservation, TrainStateEstimate
+from backend.predict import predict_crossing_blockages
 from backend.route_speech import HELP_TEXT, parse_route_request, route_summary_text
 from backend.settings import Settings
 from backend.speech import SpeechService, Synthesizer, VoiceUnavailable, transcribe_elevenlabs
@@ -98,6 +104,64 @@ def _audio_type(content_type: str | None) -> str | None:
     return None
 
 
+def _enrich_estimate(event: TrainStateEstimate) -> TrainStateEstimate:
+    """Anchor the acoustic estimate on the demo map and add crossing predictions.
+
+    Only acoustic estimates are used; no simulator truth reaches this function.
+    Raw acoustic fields are untouched. The map-framed values go in ``map_state``.
+    """
+    if (
+        event.status == "unknown"
+        or event.track_position_m is None
+        or event.latitude is None
+        or event.longitude is None
+    ):
+        return event.model_copy(update={"map_state": None, "predictions": []})
+
+    anchored = anchor_estimate(
+        track_position_m=event.track_position_m,
+        speed_mps=event.speed_mps,
+        direction_deg_from_east=event.direction_deg_from_east,
+        length_m=event.length_m,
+        provisional_length_m=event.provisional_length_m,
+    )
+    map_state = MapState(
+        anchor=ANCHOR_ID,
+        latitude=anchored.latitude,
+        longitude=anchored.longitude,
+        speed_mps=anchored.speed_mps,
+        direction_deg_from_east=anchored.direction_deg_from_east,
+        length_m=anchored.length_m,
+        provisional_length_m=anchored.provisional_length_m,
+    )
+    length_m = anchored.length_m if anchored.length_m is not None else anchored.provisional_length_m
+    if (
+        event.status == "cleared"
+        or anchored.speed_mps is None
+        or anchored.direction_deg_from_east is None
+        or length_m is None
+        or length_m <= 0
+    ):
+        return event.model_copy(update={"map_state": map_state, "predictions": []})
+
+    observation = TrainObservation(
+        trainId=event.train_id,
+        observedAt=datetime.now(timezone.utc),
+        lat=anchored.latitude,
+        lon=anchored.longitude,
+        speedMps=anchored.speed_mps,
+        lengthM=length_m,
+        degFromEast=anchored.direction_deg_from_east,
+        positionReference="front",
+    )
+    provisional = anchored.length_m is None
+    predictions = [
+        prediction.model_copy(update={"lengthProvisional": provisional})
+        for prediction in predict_crossing_blockages(observation, FRA_CROSSINGS)
+    ]
+    return event.model_copy(update={"map_state": map_state, "predictions": predictions})
+
+
 def _remember(book: AlertBook, text: str) -> dict:
     alert = SpokenAlert(
         id=f"route-{secrets.token_hex(8)}",
@@ -125,10 +189,12 @@ def create_app(
         )
     )
     speech = SpeechService(settings, book, synthesizer)
+    estimate_store = EstimateStore(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         client = httpx.AsyncClient()
+        await estimate_store.start()
         speech.bind_client(client)
         if transcriber is None and settings.elevenlabs_api_key:
 
@@ -149,12 +215,14 @@ def create_app(
         if not settings.internal_api_token:
             logger.warning("INTERNAL_API_TOKEN is unset; prediction ingest will return 503")
         yield
+        await estimate_store.close()
         await client.aclose()
 
     app = FastAPI(title="Routez user backend", lifespan=lifespan)
     app.state.book = book
     app.state.hub = UpdateHub()
     app.state.transcriber = transcriber
+    app.state.estimate_store = estimate_store
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -253,6 +321,21 @@ def create_app(
             raise HTTPException(status_code=422, detail="Route summary is incomplete.")
         return {"alert": _remember(book, summary)}
 
+    @app.post("/api/train-observations")
+    async def legacy_train_observation(body: dict) -> dict:
+        """Keep the manual/demo REST contract while live audio uses the rich event."""
+        try:
+            observation = TrainObservation.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        predictions = predict_crossing_blockages(observation, FRA_CROSSINGS)
+        envelope = PredictionEnvelope(
+            observation=observation,
+            predictions=predictions,
+            stale=False,
+        )
+        return envelope.model_dump(mode="json")
+
     @app.post("/api/predictions")
     async def ingest(
         body: dict,
@@ -272,8 +355,42 @@ def create_app(
             except ValidationError as exc:
                 raise HTTPException(status_code=422, detail=exc.errors()) from exc
             book.reset(reset.simulation_id)
+            await app.state.hub.broadcast(reset.model_dump(mode="json"))
             logger.info("simulation_reset simulation_id=%s", reset.simulation_id)
             return {"accepted": True, "alert": None}
+        if event_type == "train_state_estimate":
+            try:
+                estimate = TrainStateEstimate.model_validate(body)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail=exc.errors()) from exc
+            estimate = _enrich_estimate(estimate)
+            try:
+                alert = book.ingest_estimate(estimate)
+            except StalePrediction:
+                logger.info(
+                    "stale estimate simulation_id=%s sequence=%s",
+                    estimate.simulation_id,
+                    estimate.sequence,
+                )
+                raise HTTPException(
+                    status_code=409, detail="Stale or duplicate estimate"
+                ) from None
+            book.remember_estimate(estimate)
+            await app.state.estimate_store.enqueue(estimate)
+            await app.state.hub.broadcast(estimate.model_dump(mode="json"))
+            if alert is not None:
+                await app.state.hub.broadcast(alert.message())
+            logger.info(
+                "acoustic_estimate simulation_id=%s sequence=%s status=%s",
+                estimate.simulation_id,
+                estimate.sequence,
+                estimate.status,
+            )
+            return {
+                "accepted": True,
+                "event": estimate.model_dump(mode="json"),
+                "alert": None if alert is None else {"id": alert.id, "text": alert.text},
+            }
         try:
             event = PredictionIn.model_validate(body)
         except ValidationError as exc:
@@ -313,6 +430,8 @@ def create_app(
         await websocket.accept()
         app.state.hub.add(websocket)
         try:
+            if book.latest_estimate is not None:
+                await websocket.send_json(book.latest_estimate.model_dump(mode="json"))
             if book.latest is not None:
                 await websocket.send_json(book.latest.message())
             while True:
@@ -335,4 +454,3 @@ def run() -> None:
 
     settings = Settings.from_env()
     uvicorn.run("backend.user_api:app", host=settings.host, port=settings.port)
-

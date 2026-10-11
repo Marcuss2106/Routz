@@ -1,0 +1,57 @@
+services:
+  rail-service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    environment:
+      RAIL_CENTER_LAT: ${RAIL_CENTER_LAT:-34.0007}
+      RAIL_CENTER_LON: ${RAIL_CENTER_LON:--81.0348}
+      RAIL_RADIUS_M: ${RAIL_RADIUS_M:-16093.44}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  user-service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    command: uvicorn backend.user_api:app --host 0.0.0.0 --port 8002
+    environment:
+      USER_BACKEND_PORT: 8002
+      USER_ALLOWED_ORIGINS: ${USER_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3100}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in deploy/.env}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
+      TIGERDATA_DATABASE_URL: ${TIGERDATA_DATABASE_URL:-}
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  acoustic-service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.acoustic
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    environment:
+      USER_BACKEND_PREDICTIONS_URL: http://user-service:8002/api/predictions
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in deploy/.env}
+      SIMULATION_ALLOWED_ORIGINS: ${SIMULATION_ALLOWED_ORIGINS:-http://localhost:3100}
+    depends_on:
+      user-service:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6

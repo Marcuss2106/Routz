@@ -11,6 +11,7 @@ interface SimulationStore {
   error: string | null;
   cameraMode: CameraMode;
   cameraReset: number;
+  showTruth: boolean;
   audioConnection: ConnectionState;
   audioPrediction: AudioPrediction | null;
   sensorReadings: SensorReading[];
@@ -19,6 +20,7 @@ interface SimulationStore {
   setConnection: (connection: ConnectionState) => void;
   setError: (error: string | null) => void;
   setCameraMode: (mode: CameraMode) => void;
+  setShowTruth: (show: boolean) => void;
   setAudioConnection: (connection: ConnectionState) => void;
   setAudioPrediction: (prediction: AudioPrediction | null) => void;
   setSensorReadings: (readings: SensorReading[]) => void;
@@ -33,6 +35,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   error: null,
   cameraMode: "overview",
   cameraReset: 0,
+  showTruth: false,
   audioConnection: "connecting",
   audioPrediction: null,
   sensorReadings: [],
@@ -41,6 +44,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setConnection: (connection) => set({ connection }),
   setError: (error) => set({ error }),
   setCameraMode: (cameraMode) => set({ cameraMode }),
+  setShowTruth: (showTruth) => set({ showTruth }),
   setAudioConnection: (audioConnection) => set({ audioConnection }),
   setAudioPrediction: (audioPrediction) => set({ audioPrediction }),
   setSensorReadings: (sensorReadings) => set({ sensorReadings }),

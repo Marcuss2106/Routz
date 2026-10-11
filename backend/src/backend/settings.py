@@ -32,6 +32,7 @@ class Settings:
     elevenlabs_voice_id: str
     host: str
     port: int
+    database_url: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -48,6 +49,9 @@ class Settings:
             elevenlabs_api_key=configured_secret(os.getenv("ELEVENLABS_API_KEY", "")),
             elevenlabs_voice_id=os.getenv("ELEVENLABS_VOICE_ID", _DEFAULT_VOICE_ID).strip()
             or _DEFAULT_VOICE_ID,
+            database_url=configured_secret(
+                os.getenv("TIGERDATA_DATABASE_URL", os.getenv("DATABASE_URL", ""))
+            ),
             host=os.getenv("USER_BACKEND_HOST", "0.0.0.0"),
             port=int(os.getenv("USER_BACKEND_PORT", "8002")),
         )

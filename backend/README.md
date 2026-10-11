@@ -69,7 +69,30 @@ The server listens on port `8002` (`USER_BACKEND_PORT`). `GET /health` reports w
 
 `POST /api/voice/transcribe` accepts a short recording and returns a start and destination. `POST /api/voice/route` stores the spoken summary of a route the map already calculated. The map requests `GET /api/speech/{alert_id}` and only receives audio for a sentence this service already composed.
 
-`POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>` and the crossing-prediction JSON from the simulation backend. A repeated situation is accepted and not spoken again. A duplicate or older `sequence` returns 409. `{"type":"simulation_reset","simulation_id":"..."}` clears that run.
+`POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>`. Its
+canonical live payload is `type: "train_state_estimate"` with latitude,
+longitude, speed, stable or provisional length, numeric direction,
+confidence/uncertainty, status, and acoustic source. The user API adds crossing
+forecasts, stores the latest event for reconnecting WebSocket clients, and
+broadcasts it on `WS /ws/updates`; speech alerts remain a separate
+`route_update` event. A repeated situation is accepted and not spoken again. A
+duplicate or older `sequence` returns 409. `{"type":"simulation_reset","simulation_id":"..."}` clears that run and is broadcast to clients.
+
+The optional `TIGERDATA_DATABASE_URL`/`DATABASE_URL` enables an ordered,
+background write to the `train_state_estimates` table, compatible with Tiger
+Data/TimescaleDB. Without it, persistence is disabled and the live path stays
+in memory.
+
+### Demo anchor
+
+`backend/src/backend/demo_anchor.py` maps the acoustic rail (the toy polyline
+in `shared/simulation_geometry.json`) onto an 800 m stretch of the real
+Greene St to Laurel St Norfolk Southern corridor so predictions reach real FRA
+crossings. `POST /api/predictions` enriches each estimate with `map_state` and
+per-crossing `predictions`; while length is still provisional the windows carry
+`lengthProvisional: true` (a lower bound on clearance). This is a simulation
+device, not a localization result, and a tracking dropout never announces a
+clearance.
 
 ### Tests
 
@@ -101,5 +124,17 @@ Read selected columns and reconstruct one complete run without loading a model:
 ```bash
 PYTHONPATH=src .venv/bin/python read_dataset.py datasets/columbia-v1 --batch-size 8
 ```
+
+Score the destination-blind rail pathfinder on the generated data:
+
+```bash
+uv run evaluate-train-pathfinder datasets/columbia-v1 \
+  --output datasets/columbia-v1/pathfinder-report.json
+```
+
+The report compares a heading-based graph rollout with optional branch
+frequency priors learned only from training runs. It includes branch top-1,
+top-2, calibration, and future-position errors for true and noisy inputs.
+Hidden destinations and planned routes are never predictor features.
 
 See [`DATASET_GUIDE.md`](DATASET_GUIDE.md) for schemas, leakage boundaries, replay reconstruction, assumptions, and the complete file layout.

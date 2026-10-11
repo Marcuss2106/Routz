@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.models import TrainStateEstimate
+
 ACTIVE_STATUSES = frozenset({"approaching", "blocking"})
 VOICE_UNLOCK_ID = "voice-unlock"
 VOICE_UNLOCK_TEXT = (
@@ -124,10 +126,48 @@ def situation_key(crossings: list[CrossingForecastIn]) -> str | None:
     return ",".join(sorted(parts))
 
 
+SPEAK_WITHIN_S = 120
+
+
+def spoken_crossings(event: TrainStateEstimate) -> list[CrossingForecastIn]:
+    """Map user-facing blockage predictions to the existing speech policy.
+
+    The road name stands in for the crossing id so the sentence names the real
+    road. Far-off crossings are not spoken; only closures within about two
+    minutes or already blocked.
+    """
+    crossings: list[CrossingForecastIn] = []
+    for prediction in event.predictions:
+        if prediction.status in {"blocked_now", "stopped_on_crossing"}:
+            crossings.append(
+                CrossingForecastIn(
+                    crossing_id=prediction.roadName,
+                    eta_seconds=0.0,
+                    estimated_blockage_seconds=max(0.0, float(prediction.clearSeconds)),
+                    status="blocking",
+                )
+            )
+        elif prediction.status in {"blocked_soon", "upcoming"} and (
+            0 < prediction.etaSeconds <= SPEAK_WITHIN_S
+        ):
+            crossings.append(
+                CrossingForecastIn(
+                    crossing_id=prediction.roadName,
+                    eta_seconds=float(prediction.etaSeconds),
+                    estimated_blockage_seconds=max(
+                        0.0, float(prediction.clearSeconds - prediction.etaSeconds)
+                    ),
+                    status="approaching",
+                )
+            )
+    return crossings
+
+
 class AlertBook:
     def __init__(self) -> None:
         self.alerts: dict[str, SpokenAlert] = {}
         self.latest: SpokenAlert | None = None
+        self.latest_estimates: dict[str, TrainStateEstimate] = {}
         self._last_sequence: dict[str, int] = {}
         self._situation: dict[str, str | None] = {}
 
@@ -136,6 +176,48 @@ class AlertBook:
 
     def get(self, alert_id: str) -> SpokenAlert | None:
         return self.alerts.get(alert_id)
+
+    @property
+    def latest_estimate(self) -> TrainStateEstimate | None:
+        if not self.latest_estimates:
+            return None
+        return max(self.latest_estimates.values(), key=lambda event: event.sequence)
+
+    def remember_estimate(self, event: TrainStateEstimate) -> None:
+        """Keep the latest rich acoustic event for websocket reconnects."""
+        self.latest_estimates[event.simulation_id] = event
+
+    def ingest_estimate(self, event: TrainStateEstimate) -> SpokenAlert | None:
+        """Speak real map crossings, not the acoustic rail's internal crossing ids.
+
+        A tracking dropout (no usable estimate) says nothing about the train, so
+        it must not announce a clearance. Only a cleared train does.
+        """
+        crossings = spoken_crossings(event)
+        if not crossings and event.status != "cleared":
+            last = self._last_sequence.get(event.simulation_id)
+            if last is not None and event.sequence <= last:
+                raise StalePrediction(
+                    f"sequence {event.sequence} is stale for {event.simulation_id}"
+                )
+            self._last_sequence[event.simulation_id] = event.sequence
+            return None
+        legacy = PredictionIn(
+            simulation_id=event.simulation_id,
+            sequence=event.sequence,
+            simulation_time_s=event.simulation_time_s,
+            train_id=event.train_id,
+            status=event.status,
+            estimated_speed_mps=event.speed_mps,
+            direction=(
+                str(event.direction_deg_from_east)
+                if event.direction_deg_from_east is not None
+                else "unknown"
+            ),
+            crossings=crossings,
+            source=event.source,
+        )
+        return self.ingest(legacy)
 
     def ingest(self, event: PredictionIn) -> SpokenAlert | None:
         if event.type != "crossing_prediction":
@@ -179,5 +261,6 @@ class AlertBook:
     def reset(self, simulation_id: str) -> None:
         self._last_sequence.pop(simulation_id, None)
         self._situation.pop(simulation_id, None)
+        self.latest_estimates.pop(simulation_id, None)
         if self.latest is not None and self.latest.simulation_id == simulation_id:
             self.latest = None

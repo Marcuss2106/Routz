@@ -43,6 +43,7 @@ routez/
 - Publishes geometry over HTTP and state at about 10 Hz over WebSocket, accepting play/pause/restart/playback-speed commands from any client.
 - This service runs on port 8000. `simulation_backend` runs on port 8001 and consumes its clock indirectly through timestamped frontend audio chunks.
 - Also owns a separate headless offline dataset generator over the full connected railroad graph. Dataset generation must not start the live server or broadcast WebSocket state; keep observable Parquet inputs separate from hidden plans, branch/future labels, and replay metadata.
+- Provides a destination-blind rail pathfinder and offline evaluator. The baseline snaps position/heading/speed to the graph, emits probabilistic candidate paths, and reports held-out branch and 5/15/30-second position errors. Per-switch frequency priors may be selected only when validation results beat the heading baseline; destination, planned edges, and future labels are never inference inputs.
 
 **simulation-backend**
 - Receive audio chunks from the simulation frontend over a persistent WebSocket (preferred for continuous audio).
@@ -51,7 +52,7 @@ routez/
 - Track consecutive estimates with `[s, velocity_along_track, acceleration]`; derive nonnegative speed and numeric degrees-from-east direction from the local rail tangent.
 - Infer train length from acoustic occupancy duration. Length remains null/provisional until the train clears the array; never substitute a hard-coded consist length.
 - Publish `train_state_estimate` events with confidence and uncertainty for position, speed, length, and direction.
-- Send compact, timestamped crossing predictions to `user-backend` using HTTP POST for MVP simplicity; do not send raw audio downstream.
+- Publish the complete `train_state_estimate` to `user-backend` using the ordered background HTTP publisher; reset events must also be forwarded so a new run can start at sequence 0. Do not send raw audio downstream.
 - Keep signal processing in memory; avoid saving each sample to PostgreSQL.
 - Train sound is an extended source; a single moving point source is an acknowledged simulation simplification. A prerecorded sound is not evidence of real-world localization accuracy.
 
@@ -69,7 +70,7 @@ routez/
 - With permission, use browser geolocation to display the ambulance's current location. Ask for that fix on the Say route tap. If the browser has no fix, start from a simulated point at Swearingen Engineering Center (301 Main St, Columbia) and label it simulated.
 - Display route candidates, rail crossings, predicted closure/clearance windows, selected route, and simulated ETA impact.
 - Receive real-time events from user-backend. A Voice toggle plays concise simulated alerts (predicted closure or clearance) by requesting `GET /api/speech/{alert_id}`. Say route records a short request, the user backend transcribes it, and the map draws that driving route and speaks the result. The tap unlocks audio for iPhone Safari. Voice is optional and must not block routing. Speak a crossing line only when its alert id changes.
-- Mark the entire experience **SIMULATION / NOT FOR EMERGENCY USE**.
+- The map does not show a persistent **SIMULATION / NOT FOR EMERGENCY USE** banner. The route sheet pulls down to a peek so the map stays visible. Keep simulated estimates labeled on alerts and predictions.
 
 ## End-to-end data flow
 
@@ -78,7 +79,7 @@ simulation-frontend (3D train + 3 virtual microphone audio streams)
   -- timestamped audio chunks + microphone positions -->
 simulation-backend (denoise -> TDOA -> rail-constrained localization
                     -> speed/direction -> crossing ETA + clearance)
-  -- authenticated HTTP POST prediction event -->
+  -- authenticated ordered HTTP POST train_state_estimate -->
 user-backend <--> Vultr PostgreSQL
   | Google Maps Routes API + crossing-aware candidate scoring
   -- WebSocket route/prediction events -->
@@ -165,6 +166,7 @@ train state or source-file hint. The audio inference socket is
   "longitude": -81.0339,
   "speed_mps": 8.4,
   "length_m": null,
+  "provisional_length_m": 142.0,
   "direction_deg_from_east": 0.0,
   "status": "length_pending",
   "confidence": {"position": 0.91, "speed": 0.84, "length": 0.0, "direction": 0.97},
@@ -174,7 +176,7 @@ train state or source-file hint. The audio inference socket is
 }
 ```
 
-These numbers are illustrative, not actual detections. `speed_mps` is nonnegative. Direction is numeric degrees from east: east `0`, north `90`, west `180`, south `270`; a curved rail uses its local tangent. `length_m` remains null until acoustic occupancy clears the array, then becomes a backend-derived estimate. Main statuses are `detected`, `length_pending`, `tracking`, `cleared`, and `unknown`. Crossing forecasts are unknown while length is unavailable. The backend generates a new `train_id` for each cleared run and supports one acoustically dominant train at a time.
+These numbers are illustrative, not actual detections. `speed_mps` is nonnegative. Direction is numeric degrees from east: east `0`, north `90`, west `180`, south `270`; a curved rail uses its local tangent. `provisional_length_m` is an occupancy-based estimate while the train is still in the acoustic field; stable `length_m` remains null until acoustic occupancy clears the array, then becomes a backend-derived estimate. Main statuses are `detected`, `length_pending`, `tracking`, `cleared`, and `unknown`. Crossing forecasts are unknown while length is unavailable. The backend generates a new `train_id` for each cleared run and supports one acoustically dominant train at a time.
 
 If speed or location cannot be inferred, publish `unknown` and null values rather than a guessed value. Every estimate includes confidence and uncertainty for position, speed, length, and direction. The `source` is explicitly `acoustic_array` and the `label` is `simulated_acoustic_estimate`.
 
@@ -202,9 +204,20 @@ The inference team delivers compact train-state observations (wall-clock UTC) in
 - Crossings are **real FRA inventory data** (Form 71, SOUTH CAROLINA / COLUMBIA, public at-grade open, Norfolk Southern, with DOT IDs) curated to two corridors in `frontend/lib/crossings.ts` and mirrored in `backend/src/backend/crossings.py`. Predictions derived from them are still simulated.
 - `degFromEast` convention confirmed (Oct 2026): math CCW from east, 0=E/90=N/180=W/270=S.
 
-**Train-observation stream (documented, not served by the current processes)**
-- Planned FastAPI + SSE contract: `POST /api/train-observations`, `GET /api/predictions`, `GET /api/crossings`, `GET /api/events`. `backend/main.py` is the railroad clock and does not implement these routes. `backend/user_api.py` is the voice API.
-- Frontend links via `NEXT_PUBLIC_ROUTZ_API_URL` (`frontend/lib/trainStream.ts`) and falls back to identical local math when that URL is unset or unreachable.
+**User-facing train-state stream (current integration format, Oct 2026)**
+- `simulation-backend` sends the canonical `train_state_estimate` to authenticated `POST /api/predictions` on `backend/user_api.py`. The user backend validates sequence order, enriches crossing forecasts from the shared crossing inventory, optionally queues the estimate for Tiger Data/TimescaleDB, and broadcasts the same canonical event over `GET /ws/updates`.
+- `POST /api/train-observations` remains a compatibility endpoint for the older compact observation shape. The live frontend uses `NEXT_PUBLIC_ROUTZ_API_URL` / `NEXT_PUBLIC_ROUTZ_WS_URL` (with user-backend aliases) and consumes the canonical WebSocket event; local fallback math is only a disconnected demo fallback.
+
+**Demo anchor (Oct 2026): acoustic rail -> real Columbia corridor**
+- The acoustic frame (the toy polyline in `shared/simulation_geometry.json`) never intersects real crossings, so `backend/src/backend/demo_anchor.py` applies one fixed, documented transform. The 500 + 583 m acoustic track (plus a 180 m margin each side) maps linearly onto an 800 m stretch of the Norfolk Southern corridor, starting 820 m past Greene St, so the train front reaches Hampton St, Taylor St, Blanding St and Laurel St (FRA 715871K, 715872S, 715874F, 715875M) in order. Speed and length scale by the same factor (about 0.554). Direction follows the sign of the acoustic direction along the corridor bearing (about 109 deg from east). The anchor is a simulation device, not a localization claim, and the estimate stays labelled `simulated_demo_anchor`.
+- `simulation_backend` now includes `track_position_m` (an acoustic estimate: rail distance along the shared polyline) in the user-backend POST. It is an inference output, never truth. The `label` field is dropped from that POST.
+- `backend/user_api.py` adds `map_state` (anchored `latitude`/`longitude`/speed/direction/length with `position_reference: "front"`) to the broadcast estimate and computes crossing predictions from it. Predictions exist while the train is still being tracked: `lengthProvisional: true` means length is still the growing occupancy bound, so the clearance time is a lower bound. The frontend (`frontend/lib/routeCrossing.ts`) treats provisional windows as open-ended: a driver arriving after the provisional clear time is still a conflict, because a longer train could still be there.
+- Spoken alerts are composed server-side from the map predictions and name the real road ("Simulation. Hampton St is predicted to close in about 12 seconds.") within 120 s of arrival or while blocked. A tracking dropout (`unknown` with no position) never announces a clearance; only a `cleared` train does.
+- Known limitation: the acoustic tracker loses the train while it is inside the microphone cluster (roughly s = -60 to 150 m) and starts a new `train_id` afterwards. Predictions resume but the run is fragmented.
+
+**Simulated acoustic trials (`scripts/e2e_trials.py`, point source, white noise)**
+- `scripts/moving_source.py` builds a continuously moving point source from `train.wav` (emission delay, 1/r attenuation, noise). The source position is hidden truth, used only for scoring.
+- Results (2 seeds per cell; position error only counts live tracking windows, ETA error is for the first crossing, Hampton St): at 20 dB SNR the position error is about 5-8 m median (p90 6-12 m), direction is always correct, median ETA error is 3.5-8 s, but the fix rate is only 10-46% and median speed error is about 25-35%. At 10 dB the pipeline mostly declines to produce fixes and at 5 dB or lower it produces none. SNR is the in-track mean signal RMS per microphone, so local SNR varies. These numbers describe this synthetic setup and are not evidence of real-world accuracy.
 
 **User backend -> user frontend (WebSocket)**
 - Forward current predictions and selected route/alerts, with `simulation_id`, `sequence`, and timestamp.
@@ -214,7 +227,10 @@ The inference team delivers compact train-state observations (wall-clock UTC) in
 
 **Only `user-backend` accesses the database.** PostgreSQL is for persistence and queries, **not** a real-time message bus or raw audio store.
 
-Start with three tables:
+The current optional estimate-history table is:
+- `train_state_estimates`: one canonical acoustic estimate per `simulation_id` + `sequence`, including confidence, uncertainty, stable/provisional length, and crossing forecasts.
+
+The existing domain tables are:
 - `crossings`: `id`, `name`, `latitude`, `longitude`, optional `rail_position_m` and geometry metadata.
 - `train_observations`: `id`, `simulation_id`, `train_id`, `simulation_time_s`, estimated position, estimated speed, and ingestion timestamp.
 - `crossing_predictions`: `id`, `simulation_id`, `train_id`, `crossing_id`, `simulation_time_s`, predicted arrival/clearance **in simulation seconds**, ingestion timestamp.
@@ -277,6 +293,7 @@ ELEVENLABS_API_KEY=replace-with-private-key-if-generated-server-side
 ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
+- iPhone rehearsal: `ROUTZ_PHONE_HOST=<laptop LAN IP> ./scripts/dev.sh` binds the user API and map to `0.0.0.0`, adds `http://<LAN IP>:3000/3100` to the CORS origins, points the map at `http://<LAN IP>:8002`, and sets Next `allowedDevOrigins`. Safari only exposes geolocation and the microphone on HTTPS, so over plain LAN HTTP the map still works, Say route reports that the microphone is unavailable, and the start point falls back to the simulated Swearingen Engineering Center. Use HTTPS tunnels for both the map and port 8002 if you need Say route on the phone.
 - Current local ports are the map frontend `3000`, the 3D simulation frontend `3100` when `3000` is already taken, rail-motion `backend.main` `8000`, audio inference `8001`, and the user voice API `backend.user_api` `8002`. The map plays audio from port `8002`. Railroad CORS allows localhost and 127.0.0.1 on ports 3000 and 3100. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the voice API.
 - Next.js exposes **all `NEXT_PUBLIC_*` variables to the browser**. Only use that prefix for intentionally public configuration. Google Maps browser keys are not secrets: restrict them by HTTP referrer and API; keep Google Routes server keys private and restrict them separately.
 - ElevenLabs is called from `backend/user_api.py` on port 8002. The key stays in `ELEVENLABS_API_KEY`. The map only requests `GET /api/speech/{alert_id}` and plays the audio. `ELEVENLABS_VOICE_ID` defaults to the public Rachel voice when unset. PostgreSQL and the Google server key are not read by this speech service yet.

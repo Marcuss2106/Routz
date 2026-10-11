@@ -170,7 +170,8 @@ def test_pipeline_timestamps_full_window_at_center_and_strips_truth(
     assert first_fix.frontend_message["label"] == "simulated_acoustic_estimate"
     assert "audio" not in first_fix.backend_message
     assert "train_position_m" not in first_fix.backend_message
-    assert "track_position_m" not in first_fix.backend_message
+    assert "label" not in first_fix.backend_message
+    assert first_fix.backend_message["track_position_m"] == first_fix.frontend_message["track_position_m"]
     assert "simulation_id=buffer-demo" in caplog.text
 
 
@@ -198,6 +199,8 @@ def test_length_is_pending_until_acoustic_occupancy_clears() -> None:
     assert lifecycle.observe(1.0, True, 10.0).length_m is None
     pending = lifecycle.observe(14.0, True, 10.0)
     assert pending.status == "length_pending"
+    assert pending.provisional_length_m == pytest.approx(140.0)
+    assert pending.provisional_length_error_m is not None
     cleared = lifecycle.observe(15.6, False, 10.0)
     assert cleared.status == "cleared"
     assert cleared.length_m == pytest.approx(140.0)

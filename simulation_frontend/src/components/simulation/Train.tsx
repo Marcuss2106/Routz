@@ -1,16 +1,38 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import * as THREE from "three";
-import { sampleRoute, VEHICLE_OFFSETS_M, VISUAL_EXAGGERATION } from "@/lib/simulation";
+import { acousticSToRouteDistance, sampleRoute, VEHICLE_OFFSETS_M, VISUAL_EXAGGERATION } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
-import type { ScenePoint } from "@/types/simulation";
+import type { ScenePoint, TrainStateEstimate } from "@/types/simulation";
 
-function Vehicle({ index, route }: { index: number; route: ScenePoint[] }) {
+type TrainRenderMode = "truth" | "estimate";
+
+function Vehicle({ index, route, routeLengthM, mode }: { index: number; route: ScenePoint[]; routeLengthM: number; mode: TrainRenderMode }) {
   const ref = useRef<THREE.Group>(null);
   const isEngine = index === 0;
   useFrame(() => {
-    const { current, previous } = useSimulationStore.getState();
-    if (!current || !ref.current) return;
+    const { current, previous, audioPrediction } = useSimulationStore.getState();
+    if (!ref.current) return;
+    if (mode === "estimate") {
+      const estimate = audioPrediction?.type === "train_state_estimate" ? audioPrediction : null;
+      if (!estimate || estimate.status === "unknown" || estimate.status === "cleared" || estimate.track_position_m == null) {
+        ref.current.visible = false;
+        return;
+      }
+      ref.current.visible = true;
+      const target = acousticSToRouteDistance(estimate.track_position_m, routeLengthM);
+      const previousDistance = ref.current.userData.renderDistanceM as number | undefined;
+      const distance = previousDistance == null ? target : THREE.MathUtils.lerp(previousDistance, target, 0.14);
+      ref.current.userData.renderDistanceM = distance;
+      const estimatedLength = estimate.length_m ?? estimate.provisional_length_m ?? VEHICLE_OFFSETS_M.at(-1)!;
+      const offsetScale = Math.max(0.55, Math.min(4, estimatedLength / VEHICLE_OFFSETS_M.at(-1)!));
+      const sample = sampleRoute(route, distance - VEHICLE_OFFSETS_M[index] * offsetScale);
+      ref.current.position.set(...sample.position);
+      ref.current.rotation.y = sample.rotationY;
+      return;
+    }
+    if (!current) return;
+    ref.current.visible = true;
     const elapsed = performance.now() - current.receivedAt;
     const interval = previous ? Math.max(50, current.receivedAt - previous.receivedAt) : 100;
     const alpha = Math.min(1, elapsed / interval);
@@ -23,6 +45,7 @@ function Vehicle({ index, route }: { index: number; route: ScenePoint[] }) {
   const scale = VISUAL_EXAGGERATION.trainScale;
   return (
     <group ref={ref} scale={scale}>
+      {mode === "estimate" && <mesh position={[0, 10.5, 0]} rotation-x={Math.PI / 2}><torusGeometry args={[2.3, .28, 8, 24]} /><meshBasicMaterial color="#7c3aed" /></mesh>}
       {!isEngine && <>
         <mesh castShadow position={[0, 3, 0]}><boxGeometry args={[4.5, 3.5, 8.8]} /><meshStandardMaterial color={index % 2 ? "#bc4938" : "#a83b2e"} roughness={0.76} /></mesh>
         <mesh castShadow position={[0, 4.9, 0]}><boxGeometry args={[4.8, .35, 9.1]} /><meshStandardMaterial color="#78342d" roughness={.8} /></mesh>
@@ -48,5 +71,19 @@ function Vehicle({ index, route }: { index: number; route: ScenePoint[] }) {
 }
 
 export function Train({ route }: { route: ScenePoint[] }) {
-  return <group>{VEHICLE_OFFSETS_M.map((_, index) => <Vehicle key={index} index={index} route={route} />)}</group>;
+  const showTruth = useSimulationStore((state) => state.showTruth);
+  const audioPrediction = useSimulationStore((state) => state.audioPrediction);
+  const estimate: TrainStateEstimate | null = audioPrediction?.type === "train_state_estimate" ? audioPrediction : null;
+  const estimateActive = Boolean(
+    estimate && estimate.status !== "unknown" && estimate.status !== "cleared" && estimate.track_position_m != null,
+  );
+  const routeLengthM = route.reduce((total, point, index) => {
+    if (index === 0) return 0;
+    const previous = route[index - 1];
+    return total + Math.hypot(point[0] - previous[0], point[2] - previous[2]);
+  }, 0);
+  return <group>
+    {estimateActive && VEHICLE_OFFSETS_M.map((_, index) => <Vehicle key={`estimate-${index}`} index={index} route={route} routeLengthM={routeLengthM} mode="estimate" />)}
+    {(showTruth || !estimateActive) && VEHICLE_OFFSETS_M.map((_, index) => <Vehicle key={`truth-${index}`} index={index} route={route} routeLengthM={routeLengthM} mode="truth" />)}
+  </group>;
 }

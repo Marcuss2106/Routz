@@ -131,6 +131,7 @@ class TrainStateEstimateEvent(BaseModel):
     longitude: float | None
     speed_mps: float | None = Field(default=None, ge=0)
     length_m: float | None = Field(default=None, ge=0)
+    provisional_length_m: float | None = Field(default=None, ge=0)
     direction_deg_from_east: float | None = Field(default=None, ge=0, le=360)
     status: Literal["detected", "tracking", "length_pending", "cleared", "unknown"]
     confidence: EstimateConfidence
@@ -144,7 +145,9 @@ class TrainStateEstimateEvent(BaseModel):
         return self.model_dump(mode="json")
 
     def user_backend_payload(self) -> dict:
-        return self.model_dump(mode="json", exclude={"track_position_m", "label"})
+        # track_position_m is an acoustic estimate (rail-local metres), not truth.
+        # The user backend needs it to anchor the demo train onto the map.
+        return self.model_dump(mode="json", exclude={"label"})
 
 
 # Compatibility name for publisher integrations that still import the old type.

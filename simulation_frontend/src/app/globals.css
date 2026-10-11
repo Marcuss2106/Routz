@@ -45,6 +45,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .progress-track { height: 3px; margin: 12px 2px; overflow: hidden; border-radius: 3px; background: rgba(69,78,67,.12); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: #a94334; transition: width .1s linear; }
 .button-row { display: flex; gap: 8px; align-items: center; }
+.estimate-note { margin-top: 8px; padding: 6px 8px; border-radius: 7px; background: rgba(124,58,237,.08); color: #4c1d95; font-size: 10px; }
 .primary-button, .icon-button, .camera-button, .text-button { border: 0; border-radius: 10px; color: #334039; transition: transform .15s, background .15s; }
 .primary-button:hover, .icon-button:hover, .camera-button:hover, .text-button:hover { transform: translateY(-1px); }
 .primary-button { min-width: 105px; height: 38px; display: flex; align-items: center; justify-content: center; gap: 7px; background: #343d36; color: #f7f1e2; font-weight: 700; font-size: 12px; }

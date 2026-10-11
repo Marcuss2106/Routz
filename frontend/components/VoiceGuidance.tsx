@@ -48,7 +48,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const [streamLost, setStreamLost] = useState(false);
   const playerRef = useRef<ReturnType<typeof createVoicePlayer> | null>(null);
   const alertRef = useRef<SpokenAlert | null>(null);
-  alertRef.current = alert;
+  useEffect(() => {
+    alertRef.current = alert;
+  }, [alert]);
 
   function player() {
     if (!playerRef.current) {
@@ -155,11 +157,9 @@ export function VoiceButton() {
 
 export function VoiceAlert() {
   const { alert, voiceError, streamLost, enabled } = useVoiceGuidance();
+  if (!voiceError && !(enabled && streamLost) && !alert) return null;
   return (
     <div className="pointer-events-none flex flex-col gap-2">
-      <p className="text-center text-[11px] font-bold tracking-[0.14em] text-[#9A3412]">
-        SIMULATION / NOT FOR EMERGENCY USE
-      </p>
       {voiceError && (
         <div
           role="status"

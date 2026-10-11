@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY simulation_backend/requirements.txt /tmp/simulation-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/simulation-requirements.txt
+COPY simulation_backend/app /app/simulation_backend/app
+COPY shared /app/shared
+ENV PYTHONPATH=/app/simulation_backend
+
+EXPOSE 8001
