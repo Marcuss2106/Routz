@@ -23,12 +23,6 @@ import {
 import { readCurrentLocation } from "@/lib/here";
 import { SIMULATED_CROSSINGS, type Crossing } from "@/lib/crossings";
 import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/lib/routeCrossing";
-import { getCrossingAwareCandidates } from "@/lib/routeDetour";
-import {
-  decideReroute,
-  routeBlockSignature,
-  type StoredTrainSnapshot,
-} from "@/lib/routeRefresh";
 import {
   predictCrossingBlockages,
   predictRouteBlockages,
@@ -60,6 +54,37 @@ function simulatedHere(): PlaceResult {
   };
 }
 
+/**
+ * Ask Google for ordinary alternatives first. If every option still meets an
+ * active train conflict, force one additional candidate through the nearest
+ * crossing that the rear of the train has already cleared.
+ */
+async function getCrossingAwareCandidates(
+  origin: PlaceResult,
+  destination: PlaceResult,
+  predictions: BlockagePrediction[]
+): Promise<RouteInfo[]> {
+  const direct = await getDrivingRoutes(origin, destination, true);
+  if (predictions.length === 0 || !scoreRouteCandidates(direct, predictions)[0]?.blocked) {
+    return direct;
+  }
+
+  const cleared = predictions
+    .filter((prediction) => prediction.status === "cleared")
+    .sort((a, b) => b.distanceM - a.distanceM)[0];
+  if (!cleared) return direct;
+
+  try {
+    const viaClearedCrossing = await getDrivingRoutes(origin, destination, false, [{
+      latitude: cleared.latitude,
+      longitude: cleared.longitude,
+    }]);
+    return [...direct, ...viaClearedCrossing];
+  } catch {
+    return direct;
+  }
+}
+
 export default function Home() {
   return (
     <VoiceProvider>
@@ -89,12 +114,14 @@ function MapScreen() {
   const sheetDrag = useRef({ y: 0, dragged: false, active: false });
   const activeRouteRequestRef = useRef(0);
   const routeRefreshRef = useRef({
-    inFlight: false,
+    key: "",
+    pendingKey: "",
+    riskKey: "clear",
+    wasBlocked: false,
+    refreshedAt: 0,
     requestId: 0,
-    fetchedSignature: "",
   });
   const [simulationReceivedAtMs, setSimulationReceivedAtMs] = useState<number | null>(null);
-  const [estimateReceivedAtMs, setEstimateReceivedAtMs] = useState<number | null>(null);
 
   const estimatedTrain = useMemo(
     () => (estimate ? estimateToObservation(estimate) : null),
@@ -117,44 +144,30 @@ function MapScreen() {
     }
     return estimate?.predictions ?? [];
   }, [estimate, simulationCrossings, simulationRailRoute, simulationTrain, train]);
+  const crossingStateKey = useMemo(() => {
+    const active = predictions
+      .filter((prediction) => prediction.status !== "cleared" && prediction.status !== "unknown")
+      .map((prediction) =>
+        `${prediction.crossingId}:${prediction.status}:${Math.floor(prediction.distanceM / 50)}`
+      );
+    return active.length > 0 ? active.join("|") : "clear";
+  }, [predictions]);
+  const crossingRiskKey = useMemo(() => {
+    const active = predictions
+      .filter((prediction) => prediction.status !== "cleared" && prediction.status !== "unknown")
+      .map((prediction) => `${prediction.crossingId}:${prediction.status}`);
+    return active.length > 0 ? active.join("|") : "clear";
+  }, [predictions]);
+  const simulationTrainStatus = simulationTrain?.status;
   const routeActive = Boolean(route);
-  const trainSnapshot = useMemo((): StoredTrainSnapshot | null => {
-    if (simulationTrain && simulationReceivedAtMs !== null) {
-      return {
-        sourceId: simulationTrain.train_id,
-        sequence: simulationTrain.sequence,
-        simulationTimeS: simulationTrain.simulation_time_s,
-        sentAtMs: simulationReceivedAtMs,
-        predictions,
-      };
-    }
-    if (estimate && estimateReceivedAtMs !== null) {
-      return {
-        sourceId: `${estimate.simulation_id}:${estimate.train_id}`,
-        sequence: estimate.sequence,
-        simulationTimeS: estimate.simulation_time_s,
-        sentAtMs: estimateReceivedAtMs,
-        predictions: estimate.predictions,
-      };
-    }
-    return null;
-  }, [estimate, estimateReceivedAtMs, predictions, simulationReceivedAtMs, simulationTrain]);
-  const rerouteSignal = useMemo(() => {
-    if (!route || !trainSnapshot) return "idle";
-    return routeBlockSignature(route, trainSnapshot.predictions, Date.now());
-  }, [route, trainSnapshot]);
+  const latestPredictionsRef = useRef(predictions);
   const latestRouteRef = useRef(route);
-  const latestCandidatesRef = useRef(candidates);
-  const latestSnapshotRef = useRef(trainSnapshot);
+  useEffect(() => {
+    latestPredictionsRef.current = predictions;
+  }, [predictions]);
   useEffect(() => {
     latestRouteRef.current = route;
   }, [route]);
-  useEffect(() => {
-    latestCandidatesRef.current = candidates;
-  }, [candidates]);
-  useEffect(() => {
-    latestSnapshotRef.current = trainSnapshot;
-  }, [trainSnapshot]);
 
   const displayedConflicts = useMemo(
     () => (route ? findRouteConflicts(route, predictions) : conflicts),
@@ -214,15 +227,13 @@ function MapScreen() {
       }
       const requestId = activeRouteRequestRef.current + 1;
       activeRouteRequestRef.current = requestId;
-      routeRefreshRef.current.requestId += 1;
-      routeRefreshRef.current.inFlight = false;
       setRouteLoading(true);
       setRoute(null);
       setCandidates([]);
       setConflicts([]);
       setWasRerouted(false);
       try {
-        const results = await getCrossingAwareCandidates(from, to, predictions, Date.now());
+        const results = await getCrossingAwareCandidates(from, to, predictions);
         if (activeRouteRequestRef.current !== requestId) return;
         const scored =
           predictions.length > 0 ? scoreRouteCandidates(results, predictions) : null;
@@ -237,7 +248,11 @@ function MapScreen() {
         setDestination(snappedTo);
         setCandidates(results);
         setRoute(chosen);
-        routeRefreshRef.current.fetchedSignature = "";
+        routeRefreshRef.current.key = crossingStateKey;
+        routeRefreshRef.current.pendingKey = "";
+        routeRefreshRef.current.riskKey = crossingRiskKey;
+        routeRefreshRef.current.wasBlocked = Boolean(best?.blocked);
+        routeRefreshRef.current.refreshedAt = Date.now();
         if (best) {
           setConflicts(best.conflicts);
           const fastest = [...results].sort(
@@ -270,7 +285,7 @@ function MapScreen() {
         if (activeRouteRequestRef.current === requestId) setRouteLoading(false);
       }
     },
-    [predictions, voice]
+    [crossingRiskKey, crossingStateKey, predictions, voice]
   );
 
   const handleGetRoute = useCallback(
@@ -319,106 +334,124 @@ function MapScreen() {
     [locate, chooseRoute, voice]
   );
 
-  // Reroute from the last stored train snapshot. Google is called only when
-  // that snapshot says the train blocks every route we already have.
+  useEffect(() => {
+    if (!route || candidates.length === 0) return;
+    const scored = scoreRouteCandidates(candidates, predictions);
+    const best = scored[0];
+    if (!best) return;
+    if (best.route !== route) {
+      const current = scored.find((candidate) => candidate.route === route);
+      const trainIsStationary = Boolean(
+        simulationTrainStatus && simulationTrainStatus !== "running"
+      );
+      if (
+        trainIsStationary &&
+        current &&
+        best.conflicts.length >= current.conflicts.length
+      ) {
+        return;
+      }
+      if (
+        !current ||
+        best.blocked !== current.blocked ||
+        best.conflicts.length < current.conflicts.length ||
+        best.effectiveSeconds < current.effectiveSeconds
+      ) {
+        // Live simulation/acoustic updates can promote an already-fetched
+        // route whose crossing is behind the train instead of one ahead of it.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setRoute(best.route);
+        const fastest = [...candidates].sort(
+          (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
+        )[0];
+        setWasRerouted(best.route !== fastest);
+      }
+    }
+  }, [predictions, route, candidates, simulationTrainStatus]);
+
+  // Ask Google for a fresh set of alternatives as the train advances into a
+  // new 50 m crossing window. Calls are capped to one every five seconds;
+  // existing candidates continue to be rescored on every train update.
   useEffect(() => {
     const activeRoute = latestRouteRef.current;
-    const snapshot = latestSnapshotRef.current;
-    if (!routeActive || !activeRoute || !origin || !destination || !snapshot || routeLoading) {
+    if (!routeActive || !activeRoute || !origin || !destination || routeLoading) return;
+    if (
+      routeRefreshRef.current.key === crossingStateKey ||
+      routeRefreshRef.current.pendingKey === crossingStateKey
+    ) return;
+    const currentPredictions = latestPredictionsRef.current;
+    const routeIsBlocked = findRouteConflicts(activeRoute, currentPredictions).length > 0;
+    if (simulationTrainStatus && simulationTrainStatus !== "running" && !routeIsBlocked) {
+      // Invalidate any in-flight refresh that was started while the train was
+      // moving. Its stale response must not restore the old fastest route.
+      routeRefreshRef.current = {
+        ...routeRefreshRef.current,
+        key: crossingStateKey,
+        pendingKey: "",
+        riskKey: crossingRiskKey,
+        wasBlocked: false,
+        requestId: routeRefreshRef.current.requestId + 1,
+      };
+      activeRouteRequestRef.current += 1;
       return;
     }
-    const nowMs = Date.now();
-    const signature = routeBlockSignature(activeRoute, snapshot.predictions, nowMs);
-    const refresh = routeRefreshRef.current;
-    if (signature === "clear") refresh.fetchedSignature = "";
-    const decision = decideReroute({
-      route: activeRoute,
-      candidates: latestCandidatesRef.current,
-      snapshot,
-      nowMs,
-      requestInFlight: refresh.inFlight,
-      alreadyFetchedSignature: refresh.fetchedSignature,
-    });
-    if (decision.type === "keep") return;
-    if (decision.type === "switch") {
-      if (decision.route !== activeRoute) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setRoute(decision.route);
-        setConflicts(decision.conflicts);
-        setWasRerouted(decision.wasRerouted);
-      }
-      refresh.fetchedSignature = "";
-      return;
-    }
-
-    const requestId = refresh.requestId + 1;
-    refresh.requestId = requestId;
-    refresh.inFlight = true;
-    refresh.fetchedSignature = signature;
-    const requestedSentAt = snapshot.sentAtMs;
-    let applied = false;
-    void getCrossingAwareCandidates(origin, destination, snapshot.predictions, nowMs)
-      .then((results) => {
-        if (routeRefreshRef.current.requestId !== requestId) return;
-        const latest = latestSnapshotRef.current;
-        const currentRoute = latestRouteRef.current;
-        if (!latest || !currentRoute || latest.sentAtMs < requestedSentAt) return;
-        const now = Date.now();
-        if (routeBlockSignature(currentRoute, latest.predictions, now) === "clear") return;
-        const scored = scoreRouteCandidates(results, latest.predictions, now);
-        const best = scored.find((candidate) => !candidate.blocked);
-        if (!best) {
-          // All fetched candidates are blocked; do NOT switch to a route that runs into the train.
-          setCandidates(results);
-          routeRefreshRef.current.fetchedSignature = "";
-          return;
-        }
-        applied = true;
-        setCandidates(results);
-        setRoute(best.route);
-        setConflicts(best.conflicts);
-        setWasRerouted(true);
-        routeRefreshRef.current.fetchedSignature = "";
-      })
-      .catch(() => {
-        if (routeRefreshRef.current.requestId === requestId) {
-          routeRefreshRef.current.fetchedSignature = "";
-        }
-      })
-      .finally(() => {
-        if (routeRefreshRef.current.requestId === requestId) {
-          routeRefreshRef.current.inFlight = false;
-        }
-      });
-    return () => {
-      if (routeRefreshRef.current.requestId !== requestId) return;
-      routeRefreshRef.current.requestId += 1;
-      routeRefreshRef.current.inFlight = false;
-      if (!applied && routeRefreshRef.current.fetchedSignature === signature) {
-        routeRefreshRef.current.fetchedSignature = "";
-      }
+    const newlyRisky = routeIsBlocked && (
+      !routeRefreshRef.current.wasBlocked ||
+      routeRefreshRef.current.riskKey !== crossingRiskKey
+    );
+    const delayMs = newlyRisky
+      ? 0
+      : Math.max(0, 5000 - (Date.now() - routeRefreshRef.current.refreshedAt));
+    const requestId = routeRefreshRef.current.requestId + 1;
+    const activeRequestId = activeRouteRequestRef.current + 1;
+    activeRouteRequestRef.current = activeRequestId;
+    routeRefreshRef.current = {
+      ...routeRefreshRef.current,
+      pendingKey: crossingStateKey,
+      requestId,
     };
-  }, [
-    destination,
-    origin,
-    rerouteSignal,
-    routeActive,
-    routeLoading,
-    trainSnapshot?.sequence,
-    trainSnapshot?.sentAtMs,
-  ]);
+    const timer = window.setTimeout(() => {
+      routeRefreshRef.current = {
+        ...routeRefreshRef.current,
+        key: crossingStateKey,
+        pendingKey: "",
+        riskKey: crossingRiskKey,
+        wasBlocked: routeIsBlocked,
+        refreshedAt: Date.now(),
+      };
+      void getCrossingAwareCandidates(origin, destination, latestPredictionsRef.current)
+        .then((results) => {
+          if (
+            routeRefreshRef.current.requestId !== requestId ||
+            activeRouteRequestRef.current !== activeRequestId
+          ) return;
+          const scored = scoreRouteCandidates(results, latestPredictionsRef.current);
+          const best = scored[0];
+          if (!best) return;
+          const fastest = [...results].sort(
+            (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
+          )[0];
+          setCandidates(results);
+          setRoute(best.route);
+          setConflicts(best.conflicts);
+          setWasRerouted(best.route !== fastest);
+        })
+        .catch(() => {
+          // Keep the current valid route; the next crossing-state change retries.
+        });
+    }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [crossingRiskKey, crossingStateKey, destination, origin, routeActive, routeLoading, simulationTrainStatus]);
 
   const liveStatus = useTrainStream(
     useCallback(
       (event) => {
         if (!event) {
           setEstimate(null);
-          setEstimateReceivedAtMs(null);
           setWasRerouted(false);
           setConflicts([]);
           return;
         }
-        setEstimateReceivedAtMs(Date.now());
         setEstimate(event);
       },
       []
