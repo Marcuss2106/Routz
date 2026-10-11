@@ -71,7 +71,7 @@ uv run user-backend
 
 The server listens on port `8002` (`USER_BACKEND_PORT`). `GET /health` reports whether a real ElevenLabs key is configured. Placeholder values from `.env.example` count as unset.
 
-`POST /api/voice/transcribe` accepts a short recording and returns a start and destination. `POST /api/voice/route` stores the spoken summary of a route the map already calculated. The map requests `GET /api/speech/{alert_id}` and only receives audio for a sentence this service already composed.
+`POST /api/voice/transcribe` accepts a short recording and returns a start and destination. `POST /api/voice/route` stores the spoken summary of a route the map already calculated. `POST /api/voice/step` stores a spoken turn instruction, and `POST /api/voice/not-found` a "could not find" line. Fixed microphone prompts (`voice-help`, `voice-no-mic`, `voice-mic-blocked`, `voice-not-heard`, `voice-route-failed`) are registered at startup. ElevenLabs audio is cached by sentence text. The map requests `GET /api/speech/{alert_id}` and only receives audio for a sentence this service already composed.
 
 `POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>`. Its
 canonical live payload is `type: "train_state_estimate"` with latitude,

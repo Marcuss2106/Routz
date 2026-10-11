@@ -10,14 +10,15 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.models import TrainStateEstimate
+from backend.route_speech import speakable
 
 ACTIVE_STATUSES = frozenset({"approaching", "blocking"})
 VOICE_UNLOCK_ID = "voice-unlock"
 VOICE_UNLOCK_TEXT = (
-    "Simulation. Voice guidance is on. "
-    "You can say a route, such as from Main Street to the hospital."
+    "Voice guidance is on. "
+    "Tap the microphone and tell me where you're going."
 )
-CLEAR_TEXT = "Simulation. The predicted crossing blockage has cleared."
+CLEAR_TEXT = "Good news. The train has cleared the crossing."
 
 
 class CrossingForecastIn(BaseModel):
@@ -100,19 +101,24 @@ def spoken_line(crossings: list[CrossingForecastIn]) -> str | None:
         return (1, eta)
 
     chosen = min(active, key=urgency)
-    name = spoken_name(chosen.crossing_id)
+    name = speakable(spoken_name(chosen.crossing_id))
+    place = name if "crossing" in name.casefold() else f"the {name} crossing"
     if chosen.status == "blocking":
         remaining = _seconds(chosen.estimated_blockage_seconds)
         if remaining is None:
-            return f"Simulation. {name} is predicted blocked."
-        return (
-            f"Simulation. {name} is predicted blocked "
-            f"for about {remaining} more seconds."
-        )
+            return f"A train is blocking {place}."
+        return f"A train is blocking {place} for about {_duration(remaining)}."
     eta = _seconds(chosen.eta_seconds)
     if eta is None:
-        return f"Simulation. {name} is predicted to close."
-    return f"Simulation. {name} is predicted to close in about {eta} seconds."
+        return f"Heads up. A train is about to block {place}."
+    return f"Heads up. A train will block {place} in about {_duration(eta)}."
+
+
+def _duration(seconds: int) -> str:
+    if seconds < 90:
+        return "1 second" if seconds == 1 else f"{seconds} seconds"
+    minutes = round(seconds / 60)
+    return f"{minutes} minutes"
 
 
 def situation_key(crossings: list[CrossingForecastIn]) -> str | None:

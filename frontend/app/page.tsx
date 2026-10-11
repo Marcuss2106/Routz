@@ -28,7 +28,6 @@ import {
   predictRouteBlockages,
   type BlockagePrediction,
   type RailRoutePoint,
-  type TrainObservation,
 } from "@/lib/trains";
 import {
   estimateToObservation,
@@ -38,7 +37,12 @@ import {
   type SimulationTrainState,
   type TrainStateEstimateEvent,
 } from "@/lib/trainStream";
-import { registerRouteSpeech, type RouteTranscript } from "@/lib/voice";
+import {
+  VOICE_NOTICES,
+  registerNotFoundSpeech,
+  registerRouteSpeech,
+  type RouteTranscript,
+} from "@/lib/voice";
 
 /** Demo start when the browser cannot provide a GPS fix. */
 function simulatedHere(): PlaceResult {
@@ -97,8 +101,6 @@ function MapScreen() {
   const [candidates, setCandidates] = useState<RouteInfo[]>([]);
   const [conflicts, setConflicts] = useState<RouteConflict[]>([]);
   const [wasRerouted, setWasRerouted] = useState(false);
-  const [manualTrain, setManualTrain] = useState<TrainObservation | null>(null);
-  const [manualPredictions, setManualPredictions] = useState<BlockagePrediction[]>([]);
   const [simulationTrain, setSimulationTrain] = useState<SimulationTrainState | null>(null);
   const [simulationCrossings, setSimulationCrossings] = useState<Crossing[]>(SIMULATED_CROSSINGS);
   const [simulationRailRoute, setSimulationRailRoute] = useState<RailRoutePoint[]>([]);
@@ -125,8 +127,8 @@ function MapScreen() {
     [estimate]
   );
   const train = useMemo(
-    () => simulationTrain ? simulationStateToObservation(simulationTrain) : estimatedTrain ?? manualTrain,
-    [estimatedTrain, manualTrain, simulationTrain]
+    () => simulationTrain ? simulationStateToObservation(simulationTrain) : estimatedTrain,
+    [estimatedTrain, simulationTrain]
   );
   const predictions = useMemo(() => {
     if (simulationTrain && train) {
@@ -134,8 +136,8 @@ function MapScreen() {
         ? predictRouteBlockages(simulationTrain, simulationRailRoute, simulationCrossings)
         : predictCrossingBlockages(train, simulationCrossings);
     }
-    return estimate?.predictions ?? manualPredictions;
-  }, [estimate, manualPredictions, simulationCrossings, simulationRailRoute, simulationTrain, train]);
+    return estimate?.predictions ?? [];
+  }, [estimate, simulationCrossings, simulationRailRoute, simulationTrain, train]);
   const crossingStateKey = useMemo(() => {
     const active = predictions
       .filter((prediction) => prediction.status !== "cleared" && prediction.status !== "unknown")
@@ -262,6 +264,7 @@ function MapScreen() {
               destination_name: snappedTo.name,
               duration_seconds: chosen.expectedTravelTimeSeconds,
               distance_meters: chosen.distanceMeters,
+              first_instruction: chosen.steps[0]?.instruction ?? "",
             });
             voice.speak(alert);
           } catch {
@@ -271,6 +274,7 @@ function MapScreen() {
       } catch (err) {
         if (activeRouteRequestRef.current !== requestId) return;
         setRouteError(err instanceof Error ? err.message : "Could not calculate a route.");
+        if (speakResult) voice.speak(VOICE_NOTICES.routeFailed);
       } finally {
         if (activeRouteRequestRef.current === requestId) setRouteLoading(false);
       }
@@ -296,13 +300,17 @@ function MapScreen() {
       const destinationQuery = request.destination_query;
       if (!destinationQuery) return;
       setRouteError(null);
+      const notFound = (query: string) => {
+        setRouteError(`Could not find ${query}. Try a more specific name.`);
+        void registerNotFoundSpeech(query).then(voice.speak).catch(() => {
+          // The written error is enough when speech is unavailable.
+        });
+      };
       const nextOrigin = request.use_current_location
         ? await locate()
         : await resolveSpokenPlace(request.origin_query ?? "");
       if (!nextOrigin) {
-        setRouteError(
-          `Could not find ${request.origin_query ?? "the start"}. Try a more specific name.`
-        );
+        notFound(request.origin_query ?? "the start");
         return;
       }
       const nextDestination = await resolveSpokenPlace(
@@ -310,14 +318,14 @@ function MapScreen() {
         nextOrigin.coordinate
       );
       if (!nextDestination) {
-        setRouteError(`Could not find ${destinationQuery}. Try a more specific name.`);
+        notFound(destinationQuery);
         return;
       }
       setOrigin(nextOrigin);
       setDestination(nextDestination);
       await chooseRoute(nextOrigin, nextDestination, true);
     },
-    [locate, chooseRoute]
+    [locate, chooseRoute, voice]
   );
 
   useEffect(() => {
@@ -429,19 +437,6 @@ function MapScreen() {
     return () => window.clearTimeout(timer);
   }, [crossingRiskKey, crossingStateKey, destination, origin, routeActive, routeLoading, simulationTrainStatus]);
 
-  const handleTrainObservation = useCallback(
-    (obs: TrainObservation | null, preds: BlockagePrediction[]) => {
-      setEstimate(null);
-      setManualTrain(obs);
-      setManualPredictions(preds);
-      if (!obs) {
-        setWasRerouted(false);
-        setConflicts([]);
-      }
-    },
-    []
-  );
-
   const liveStatus = useTrainStream(
     useCallback(
       (event) => {
@@ -532,7 +527,7 @@ function MapScreen() {
           simulationRailRoute={simulationRailRoute}
           predictions={predictions}
           isCalculating={routeLoading}
-          bottomInset={sheetHeight + 16}
+          bottomInset={sheetHeight + (routeSelected ? 16 : 96)}
           topInset={routeSelected ? 200 : 80}
         />
       </div>
@@ -551,9 +546,9 @@ function MapScreen() {
 
       {!routeSelected && (
         <>
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-            <div className="pointer-events-auto flex min-h-11 flex-wrap items-center justify-center gap-2 rounded-2xl bg-white/95 px-3 py-1.5 shadow-[0_8px_30px_rgba(11,27,51,0.12)] backdrop-blur">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#A65353] text-white">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-full bg-white/95 pl-1.5 pr-3.5 shadow-[0_8px_30px_rgba(11,27,51,0.12)] backdrop-blur">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#A65353] text-white">
                 <svg
                   viewBox="0 0 24 24"
                   className="h-4 w-4"
@@ -569,8 +564,12 @@ function MapScreen() {
                   />
                 </svg>
               </span>
-              <span className="text-[15px] font-bold leading-none">Routz</span>
-              <VoiceRouteButton disabled={routeLoading} onRequest={handleSpokenRoute} />
+              <span className="text-[16px] font-bold leading-none">Routz</span>
+              <span className="rounded-full bg-[#7A5C00]/10 px-2 py-0.5 text-[11px] font-bold text-[#7A5C00]">
+                Sim
+              </span>
+            </div>
+            <div className="pointer-events-auto">
               <VoiceButton />
             </div>
           </div>
@@ -578,6 +577,9 @@ function MapScreen() {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center">
             <div className="pointer-events-none mb-2 w-[min(100%-1.5rem,28rem)]">
               <VoiceAlert />
+            </div>
+            <div className="pointer-events-none mb-3 flex w-[min(100%-1.5rem,28rem)] justify-end">
+              <VoiceRouteButton disabled={routeLoading} onRequest={handleSpokenRoute} />
             </div>
             {routeError && (
               <div
@@ -603,7 +605,7 @@ function MapScreen() {
 
             <div
               ref={sheetRef}
-              className="pointer-events-auto max-h-[78dvh] w-full max-w-md overflow-hidden rounded-t-[28px] bg-white px-4 pt-2 shadow-[0_-12px_40px_rgba(11,27,51,0.2)] pb-[max(0.85rem,env(safe-area-inset-bottom))]"
+              className="pointer-events-auto max-h-[68dvh] w-full max-w-md overflow-hidden rounded-t-[28px] bg-white px-4 pt-2 shadow-[0_-12px_40px_rgba(11,27,51,0.2)] pb-[max(0.85rem,env(safe-area-inset-bottom))]"
             >
               <button
                 type="button"
@@ -649,7 +651,7 @@ function MapScreen() {
                 }`}
               >
                 <div className="min-h-0 overflow-hidden">
-                  <div className="mt-3 max-h-[calc(78dvh-4.5rem)] overflow-y-auto">
+                  <div className="mt-3 max-h-[calc(68dvh-4.5rem)] overflow-y-auto">
                     <RouteForm
                       origin={origin}
                       destination={destination}
@@ -676,7 +678,6 @@ function MapScreen() {
                         estimate={simulationTrain ? null : estimate}
                         simulationTrain={simulationTrain}
                         predictions={predictions}
-                        onObservation={handleTrainObservation}
                         liveStatus={displayedLiveStatus}
                       />
                       <p className="mt-2 text-center text-[12px] text-[#0B1B33]/45">

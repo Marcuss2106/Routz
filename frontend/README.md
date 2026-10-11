@@ -17,7 +17,7 @@ Mobile-friendly Next.js app that provides a polished **Google Maps driving-route
 - `components/GoogleMap.tsx` — map, markers, route polyline, train/crossing overlays
 - `components/RouteForm.tsx` — origin/destination search + submit behavior
 - `components/ActiveRoute.tsx` — navigation banner + crossing alerts
-- `components/TrainPanel.tsx` — demo ingestion: paste train observation JSON, see blockage predictions
+- `components/TrainPanel.tsx` — live train status and predicted crossing blockages
 - `lib/googleMaps.ts` — Google Maps helpers, types, formatters, mock suggestions
 - `lib/trains.ts` — `TrainObservation` type + `predictCrossingBlockages()` (straight-line constant-velocity model)
 - `lib/crossings.ts` — real FRA inventory crossings (Columbia, SC, with DOT IDs)
@@ -86,7 +86,7 @@ corridor, heading 109° — the track's actual line. The inference team's
 - `positionReference`: which point of the train `lat`/`lon` refers to (`front` | `center` | `rear`).
 - `observedAt`: ISO-8601 UTC. Stale observations (>~90s old) produce stale predictions — the demo warns about this.
 
-Paste an observation into the **Train crossings** panel (below the route form) or tap **Sample** to load a live one. Routz predicts per-road `blockStartUtc`/`blockEndUtc` windows, draws them on the map, checks each Google route candidate against them, and picks the fastest non-blocked option. If all candidates are blocked, it shows the expected wait instead of pretending to reroute.
+Post an observation to the user backend (`POST /api/train-observations`) or run the live simulation; the **Train crossings** panel below the route form shows the result. Routz predicts per-road `blockStartUtc`/`blockEndUtc` windows, draws them on the map, checks each Google route candidate against them, and picks the fastest non-blocked option. If all candidates are blocked, it shows the expected wait instead of pretending to reroute.
 
 ## Prerequisites
 
@@ -168,7 +168,7 @@ Optional. Route search still runs in the browser if the voice backend is down.
 1. Copy `backend/.env.example` to `backend/.env` and set `ELEVENLABS_API_KEY` (and the same `INTERNAL_API_TOKEN` the simulation backend uses).
 2. From `backend/`, run `uv run user-backend` (port 8002). `uv run backend` is the railroad clock on port 8000.
 3. Tap **Voice** in the map header. That tap unlocks audio and speaks a short simulated line. Later crossing alerts are spoken only when a new alert arrives.
-4. Tap **Say route**, then say a start and a destination, such as “from Main Street to the hospital.” Tap **Listening** to send it, or wait eight seconds. The map draws that driving route and speaks the time and distance. “Take me to …” starts from the browser’s location. If that fix is unavailable, the start is a simulated point at Swearingen Engineering Center, 301 Main St, Columbia, SC.
+4. Tap the round **microphone** button, then say a start and a destination, such as “from Main Street to the hospital.” Tap it again to send, or wait eight seconds. The map draws that driving route and speaks the time and distance. “Take me to …” starts from the browser’s location. If that fix is unavailable, the start is a simulated point at Swearingen Engineering Center, 301 Main St, Columbia, SC.
 
 The route sheet pulls down from the handle so the map stays visible. Simulated estimates stay labeled on alerts and predictions.
 

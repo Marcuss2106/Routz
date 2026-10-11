@@ -29,7 +29,15 @@ from backend.demo_anchor import ANCHOR_ID, anchor_estimate
 from backend.estimate_store import EstimateStore
 from backend.models import MapState, PredictionEnvelope, TrainObservation, TrainStateEstimate
 from backend.predict import predict_crossing_blockages
-from backend.route_speech import HELP_TEXT, parse_route_request, route_summary_text
+from backend.route_speech import (
+    HELP_TEXT,
+    NOTICE_TEXTS,
+    parse_route_request,
+    place_not_found_text,
+    route_step_text,
+    route_summary_text,
+    speakable,
+)
 from backend.settings import Settings
 from backend.speech import SpeechService, Synthesizer, VoiceUnavailable, transcribe_elevenlabs
 
@@ -188,6 +196,10 @@ def create_app(
             sequence=0,
         )
     )
+    for notice_id, notice_text in NOTICE_TEXTS.items():
+        book.register(
+            SpokenAlert(id=notice_id, text=notice_text, simulation_id="local", sequence=0)
+        )
     speech = SpeechService(settings, book, synthesizer)
     estimate_store = EstimateStore(settings.database_url)
 
@@ -298,15 +310,18 @@ def create_app(
             request.use_current_location,
         )
         if request.use_current_location:
-            heard = f"your location to {request.destination_query}"
+            heard = f"your location to {speakable(request.destination_query)}"
         else:
-            heard = f"{request.origin_query} to {request.destination_query}"
+            heard = (
+                f"{speakable(request.origin_query or '')} "
+                f"to {speakable(request.destination_query)}"
+            )
         return {
             "transcript": transcript,
             "origin_query": request.origin_query,
             "destination_query": request.destination_query,
             "use_current_location": request.use_current_location,
-            "alert": _remember(book, f"Simulation. Looking up a driving route from {heard}."),
+            "alert": _remember(book, f"Okay, finding a route from {heard}."),
         }
 
     @app.post("/api/voice/route")
@@ -316,10 +331,26 @@ def create_app(
             str(body.get("destination_name", "")),
             _as_float(body.get("duration_seconds")),
             _as_float(body.get("distance_meters")),
+            str(body.get("first_instruction", "")),
         )
         if summary is None:
             raise HTTPException(status_code=422, detail="Route summary is incomplete.")
         return {"alert": _remember(book, summary)}
+
+    @app.post("/api/voice/step")
+    async def speak_step(body: dict) -> dict:
+        text = route_step_text(
+            str(body.get("instruction", "")),
+            _as_float(body.get("distance_meters")),
+            str(body.get("next_instruction", "")),
+        )
+        if text is None:
+            raise HTTPException(status_code=422, detail="Route step is incomplete.")
+        return {"alert": _remember(book, text)}
+
+    @app.post("/api/voice/not-found")
+    async def speak_not_found(body: dict) -> dict:
+        return {"alert": _remember(book, place_not_found_text(str(body.get("query", ""))))}
 
     @app.post("/api/train-observations")
     async def legacy_train_observation(body: dict) -> dict:

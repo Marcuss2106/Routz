@@ -121,7 +121,7 @@ def test_prediction_requires_the_shared_token() -> None:
     )
     assert accepted.status_code == 200
     alert = accepted.json()["alert"]
-    assert alert["text"].startswith("Simulation.")
+    assert alert["text"].startswith("Heads up.")
     # The map encodes the id. A found alert with no API key is 503, not 404.
     spoken = client.get(f"/api/speech/{alert['id']}")
     assert spoken.status_code == 503
@@ -159,7 +159,7 @@ def test_websocket_receives_the_latest_alert() -> None:
         message = websocket.receive_json()
     assert message["type"] == "route_update"
     assert message["label"] == "estimate"
-    assert message["alert"]["text"].startswith("Simulation. crossing 001")
+    assert message["alert"]["text"].startswith("Heads up. A train will block crossing 001")
 
 
 def test_canonical_acoustic_estimate_is_replayed_and_resettable() -> None:
@@ -224,7 +224,9 @@ def test_acoustic_estimate_is_anchored_on_real_crossings_and_spoken_by_name() ->
     assert hampton["status"] == "blocked_soon"
     assert hampton["lengthProvisional"] is True
     assert 8 <= hampton["etaSeconds"] <= 18
-    assert body["alert"]["text"].startswith("Simulation. Hampton St is predicted to close")
+    assert body["alert"]["text"].startswith(
+        "Heads up. A train will block the Hampton Street crossing in about"
+    )
 
 
 def test_estimate_without_track_position_gets_no_map_predictions() -> None:
@@ -269,7 +271,7 @@ def test_tracking_dropout_does_not_announce_a_clearance() -> None:
     client = TestClient(create_app(_settings()))
     headers = {"Authorization": "Bearer test-token"}
     first = client.post("/api/predictions", json=_moving_estimate(1), headers=headers)
-    assert first.json()["alert"]["text"].startswith("Simulation. Hampton St")
+    assert first.json()["alert"]["text"].startswith("Heads up. A train will block the Hampton Street")
 
     dropout = client.post(
         "/api/predictions",
@@ -294,4 +296,4 @@ def test_tracking_dropout_does_not_announce_a_clearance() -> None:
         json=_moving_estimate(4, status="cleared", length_m=150.0, provisional_length_m=None),
         headers=headers,
     )
-    assert cleared.json()["alert"]["text"] == "Simulation. The predicted crossing blockage has cleared."
+    assert cleared.json()["alert"]["text"] == "Good news. The train has cleared the crossing."

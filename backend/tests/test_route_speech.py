@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from backend.user_api import create_app
-from backend.route_speech import parse_route_request, route_summary_text
+from backend.route_speech import parse_route_request, route_step_text, route_summary_text
 from backend.settings import Settings
 
 
@@ -39,8 +39,8 @@ def test_parse_from_to_and_current_location() -> None:
 def test_route_summary_uses_a_fixed_sentence() -> None:
     text = route_summary_text("Lady St", "the airport", 840, 8000)
     assert text == (
-        "Simulation. Driving route from Lady St to the airport. "
-        "About 14 minutes and 5.0 miles."
+        "Here's your route from Lady Street to the airport. "
+        "It's about 14 minutes and 5 miles."
     )
     assert route_summary_text("A", "B", 10, 100) is None
     assert route_summary_text("Lady St", "airport", -1, 100) is None
@@ -62,7 +62,7 @@ def test_transcription_becomes_a_route_lookup() -> None:
     assert response.status_code == 200
     assert body["origin_query"] == "Main Street"
     assert body["destination_query"] == "the hospital"
-    assert body["alert"]["text"].startswith("Simulation. Looking up")
+    assert body["alert"]["text"].startswith("Okay, finding a route from Main Street")
 
 
 def test_unparsed_speech_asks_for_two_places() -> None:
@@ -75,7 +75,7 @@ def test_unparsed_speech_asks_for_two_places() -> None:
         files={"file": ("route.webm", b"abc" * 50, "audio/webm")},
     )
     assert response.json()["destination_query"] is None
-    assert "Say a start and a destination" in response.json()["alert"]["text"]
+    assert "Tell me where you're going" in response.json()["alert"]["text"]
 
 
 def test_route_summary_is_stored_for_playback() -> None:
@@ -97,7 +97,56 @@ def test_route_summary_is_stored_for_playback() -> None:
     alert = created.json()["alert"]
     audio = client.get(f"/api/speech/{alert['id']}")
     assert audio.status_code == 200
-    assert b"Driving route from Lady St" in audio.content
+    assert b"route from Lady Street" in audio.content
+
+
+def test_route_summary_can_include_the_first_turn() -> None:
+    text = route_summary_text(
+        "Lady St", "the airport", 840, 8000, "Head north on Main St"
+    )
+    assert text is not None and text.endswith("First, head north on Main Street.")
+
+
+def test_route_step_names_the_next_turn() -> None:
+    assert route_step_text(
+        "Head north on Main St", 480, "Turn right onto Gervais St"
+    ) == (
+        "Head north on Main Street. In 0.3 miles, turn right onto Gervais Street."
+    )
+    assert route_step_text("Head north on Main St", 480) == (
+        "Head north on Main Street."
+    )
+    assert route_step_text("", 480) is None
+
+
+def test_step_and_notices_are_spoken_by_elevenlabs() -> None:
+    spoken: list[str] = []
+
+    async def synthesize(text: str) -> bytes:
+        spoken.append(text)
+        return text.encode()
+
+    client = TestClient(
+        create_app(_settings(elevenlabs_api_key="live-key"), synthesizer=synthesize)
+    )
+    step = client.post(
+        "/api/voice/step",
+        json={"instruction": "Turn left onto Assembly St", "distance_meters": 200},
+    ).json()["alert"]
+    assert client.get(f"/api/speech/{step['id']}").status_code == 200
+    again = client.post(
+        "/api/voice/step",
+        json={"instruction": "Turn left onto Assembly St", "distance_meters": 200},
+    ).json()["alert"]
+    assert again["id"] != step["id"]
+    assert client.get(f"/api/speech/{again['id']}").status_code == 200
+    assert spoken.count("Turn left onto Assembly Street.") == 1
+
+    missing = client.post("/api/voice/not-found", json={"query": "Nowhere Plaza"})
+    assert "couldn't find Nowhere Plaza" in missing.json()["alert"]["text"]
+    for notice in ("voice-help", "voice-no-mic", "voice-mic-blocked", "voice-not-heard"):
+        assert client.get(f"/api/speech/{notice}").status_code == 200
+    assert client.post("/api/voice/step", json={}).status_code == 422
 
 
 def test_transcription_without_a_key_is_unavailable() -> None:

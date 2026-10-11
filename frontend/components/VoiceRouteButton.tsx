@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useVoiceGuidance } from "@/components/VoiceGuidance";
 import { armCurrentLocation } from "@/lib/here";
 import {
+  VOICE_NOTICES,
   transcribeRoute,
   type RouteTranscript,
 } from "@/lib/voice";
@@ -15,7 +16,7 @@ type VoiceRouteButtonProps = {
   onRequest: (request: RouteTranscript) => Promise<void>;
 };
 
-/** Tap to speak a start and destination. A second tap, or eight seconds, sends it. */
+/** Tap the mic to speak a start and destination. A second tap, or eight seconds, sends it. */
 export default function VoiceRouteButton({
   disabled = false,
   onRequest,
@@ -32,9 +33,7 @@ export default function VoiceRouteButton({
     const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
     recorder.stream.getTracks().forEach((track) => track.stop());
     if (blob.size < 100) {
-      voice.report(
-        "Simulation. Say a start and a destination. For example, from Main Street to the hospital."
-      );
+      voice.speak(VOICE_NOTICES.help);
       return;
     }
     setWorking(true);
@@ -46,6 +45,7 @@ export default function VoiceRouteButton({
       }
       await onRequest(request);
     } catch (err) {
+      voice.speak(VOICE_NOTICES.notHeard);
       voice.report(err instanceof Error ? err.message : "Could not hear a route.");
     } finally {
       setWorking(false);
@@ -55,11 +55,8 @@ export default function VoiceRouteButton({
   async function start() {
     voice.prime();
     armCurrentLocation();
-    if (!navigator.mediaDevices?.getUserMedia) {
-      voice.speak({
-        id: "route-no-mic",
-        text: "Simulation. This browser cannot use the microphone.",
-      });
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      voice.speak(VOICE_NOTICES.noMic);
       return;
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -90,25 +87,72 @@ export default function VoiceRouteButton({
       return;
     }
     void start().catch(() => {
-      voice.report("Allow the microphone to say a route.");
+      voice.speak(VOICE_NOTICES.micBlocked);
     });
   }
 
-  const label = listening ? "Listening" : working ? "Hearing" : "Say route";
+  const busy = working || disabled;
+  const label = listening
+    ? "Listening… tap to stop"
+    : busy
+      ? "Finding your route…"
+      : "Say your route";
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled || working}
-      aria-pressed={listening}
-      className={`min-h-9 rounded-full px-3 py-1 text-[12px] font-semibold ${
-        listening
-          ? "bg-[#9A3412] text-white"
-          : "bg-[#F6EAEA] text-[#A65353]"
-      } disabled:opacity-60`}
+    <div className="pointer-events-auto flex items-center gap-2.5">
+      <span
+        aria-hidden
+        className={`rounded-full px-3.5 py-2 text-[14px] font-semibold shadow-[0_8px_30px_rgba(11,27,51,0.14)] backdrop-blur ${
+          listening ? "bg-[#9A3412] text-white" : "bg-white/95 text-[#0B1B33]"
+        }`}
+      >
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy}
+        aria-pressed={listening}
+        aria-label={listening ? "Stop listening and find route" : "Say your route"}
+        className={`relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_28px_rgba(166,83,83,0.45)] transition-transform active:scale-95 disabled:opacity-70 ${
+          listening ? "bg-[#9A3412]" : "bg-[#A65353]"
+        }`}
+      >
+        {listening && (
+          <span
+            aria-hidden
+            className="absolute inset-0 animate-ping rounded-full bg-[#9A3412]/45 motion-reduce:animate-none"
+          />
+        )}
+        {busy && !listening ? (
+          <span
+            aria-hidden
+            className="h-6 w-6 animate-spin rounded-full border-[3px] border-white border-t-transparent"
+          />
+        ) : (
+          <MicIcon />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="relative h-7 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
     >
-      {label}
-    </button>
+      <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" />
+      <path d="M5.5 11a6.5 6.5 0 0 0 13 0" />
+      <path d="M12 17.5V21" />
+      <path d="M8.5 21h7" />
+    </svg>
   );
 }

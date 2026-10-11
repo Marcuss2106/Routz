@@ -263,7 +263,7 @@ export default function RouteForm({
         Where are you going?
       </h1>
       <p className="mt-0.5 mb-3 text-[13px] text-[#0B1B33]/55">
-        Pick a start and destination.
+        Type a start and destination, or tap the mic and say it.
       </p>
       <div className="relative flex flex-col gap-2">
         {/* Origin input */}

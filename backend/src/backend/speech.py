@@ -14,6 +14,8 @@ logger = logging.getLogger("user_backend")
 
 Synthesizer = Callable[[str], Awaitable[bytes]]
 
+_CACHE_LIMIT = 256
+
 # A calm, warm delivery keeps short route and crossing alerts pleasant without
 # making them sound theatrical. All server-composed speech uses this profile.
 PLEASANT_VOICE_SETTINGS = {
@@ -104,11 +106,13 @@ class SpeechService:
             raise KeyError(alert_id)
         if not self.settings.elevenlabs_api_key or self._synthesize is None:
             raise VoiceUnavailable
-        cached = self._cache.get(alert_id)
+        cached = self._cache.get(alert.text)
         if cached is not None:
             return cached, True
         audio = await self._synthesize(alert.text)
         if not audio:
             raise VoiceUnavailable
-        self._cache[alert_id] = audio
+        if len(self._cache) >= _CACHE_LIMIT:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[alert.text] = audio
         return audio, False

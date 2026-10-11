@@ -40,7 +40,7 @@ def test_spoken_line_names_the_soonest_closure() -> None:
             _approaching(45),
         ]
     )
-    assert text == "Simulation. crossing 001 is predicted to close in about 45 seconds."
+    assert text == "Heads up. A train will block crossing 001 in about 45 seconds."
 
 
 def test_blocking_is_spoken_ahead_of_a_later_approach() -> None:
@@ -55,7 +55,7 @@ def test_blocking_is_spoken_ahead_of_a_later_approach() -> None:
             ),
         ]
     )
-    assert text == "Simulation. crossing 002 is predicted blocked for about 30 more seconds."
+    assert text == "A train is blocking crossing 002 for about 30 seconds."
 
 
 def test_same_situation_is_not_spoken_again() -> None:
@@ -63,7 +63,7 @@ def test_same_situation_is_not_spoken_again() -> None:
     first = book.ingest(_event(1, [_approaching(45)]))
     second = book.ingest(_event(2, [_approaching(40)]))
     assert first is not None
-    assert first.text.startswith("Simulation.")
+    assert first.text.startswith("Heads up.")
     assert second is None
 
 

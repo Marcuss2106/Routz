@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
+import { SpeakerIcon, VoiceAlert, useVoiceGuidance } from "@/components/VoiceGuidance";
 import type { PlaceResult, RouteInfo, RouteStep } from "@/lib/googleMaps";
 import { conflictRoadLabel, type RouteConflict } from "@/lib/routeCrossing";
+import { registerStepSpeech } from "@/lib/voice";
 
 interface ActiveRouteProps {
   route: RouteInfo;
@@ -29,7 +31,7 @@ export default function ActiveRoute({
 }: ActiveRouteProps) {
   const step = route.steps[0];
   const upcoming = route.steps[1];
-  const [muted, setMuted] = useState(false);
+  const voice = useVoiceGuidance();
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
@@ -55,14 +57,35 @@ export default function ActiveRoute({
   const waitMinutes =
     totalWait > 0 ? Math.max(1, Math.round(totalWait / 60)) : 0;
 
+  const { enabled: voiceEnabled, speak } = voice;
+  const spokenInstructionRef = useRef(instruction);
+
+  function speakStep() {
+    spokenInstructionRef.current = instruction;
+    void registerStepSpeech({
+      instruction,
+      distance_meters: step?.distanceMeters || route.distanceMeters,
+      next_instruction: upcoming?.instruction ?? "",
+    }).then(speak).catch(() => {
+      // The banner still shows the instruction when speech is unavailable.
+    });
+  }
+
+  // The route summary already names the first turn, so only a changed
+  // instruction (a reroute) is called out automatically.
+  useEffect(() => {
+    if (!voiceEnabled || spokenInstructionRef.current === instruction) return;
+    speakStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instruction, voiceEnabled]);
+
   function toggleVoice() {
-    const nextMuted = !muted;
-    setMuted(nextMuted);
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    if (nextMuted) return;
-    const utterance = new SpeechSynthesisUtterance(`${instruction}. ${detail}`);
-    window.speechSynthesis.speak(utterance);
+    if (voice.enabled) {
+      voice.toggle();
+      return;
+    }
+    voice.prime();
+    speakStep();
   }
 
   return (
@@ -82,11 +105,13 @@ export default function ActiveRoute({
           <button
             type="button"
             onClick={toggleVoice}
-            aria-label={muted ? "Unmute guidance" : "Mute guidance"}
-            aria-pressed={muted}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 active:bg-white/25"
+            aria-label={voice.enabled ? "Mute voice guidance" : "Speak this turn"}
+            aria-pressed={voice.enabled}
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
+              voice.enabled ? "bg-white text-[#16325C]" : "bg-white/15 text-white active:bg-white/25"
+            }`}
           >
-            <SpeakerIcon muted={muted} />
+            <SpeakerIcon muted={!voice.enabled} className="h-6 w-6" />
           </button>
         </div>
 
@@ -118,8 +143,11 @@ export default function ActiveRoute({
 
       <div
         ref={barRef}
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
       >
+        <div className="mb-2 w-full max-w-md">
+          <VoiceAlert />
+        </div>
         <div className="pointer-events-auto w-full max-w-md rounded-[28px] bg-white px-4 py-3.5 shadow-[0_16px_48px_rgba(11,27,51,0.22)]">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#16325C] text-white">
@@ -276,34 +304,6 @@ function ManeuverIcon({ maneuver }: { maneuver: string }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-    </svg>
-  );
-}
-
-function SpeakerIcon({ muted }: { muted: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden>
-      <path
-        d="M4 10v4h3l4 3V7L7 10H4Z"
-        stroke="white"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      {muted ? (
-        <path
-          d="M16 10l4 4m0-4-4 4"
-          stroke="white"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      ) : (
-        <path
-          d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a6.5 6.5 0 0 1 0 10"
-          stroke="white"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      )}
     </svg>
   );
 }

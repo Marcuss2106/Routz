@@ -2,6 +2,30 @@
 
 export const VOICE_UNLOCK_ALERT_ID = "voice-unlock";
 
+/** Fixed prompts the user backend registers at startup, with matching captions. */
+export const VOICE_NOTICES = {
+  help: {
+    id: "voice-help",
+    text: "Tell me where you're going. For example, from Main Street to the hospital.",
+  },
+  noMic: {
+    id: "voice-no-mic",
+    text: "This browser can't use the microphone. You can type your route instead.",
+  },
+  micBlocked: {
+    id: "voice-mic-blocked",
+    text: "I need microphone access to hear your route.",
+  },
+  notHeard: {
+    id: "voice-not-heard",
+    text: "Sorry, I didn't catch that. Please try again.",
+  },
+  routeFailed: {
+    id: "voice-route-failed",
+    text: "Sorry, I couldn't find a driving route.",
+  },
+} as const satisfies Record<string, SpokenAlert>;
+
 export type SpokenAlert = {
   id: string;
   text: string;
@@ -89,6 +113,17 @@ export function createVoicePlayer(onError: (message: string) => void) {
     });
   }
 
+  function play(id: string, url: string) {
+    if (!unlocked) return;
+    handled.add(id);
+    const clip = { id, url };
+    if (current) {
+      queued = clip;
+      return;
+    }
+    start(clip);
+  }
+
   return {
     unlock(url: string) {
       unlocked = true;
@@ -97,15 +132,11 @@ export function createVoicePlayer(onError: (message: string) => void) {
       start({ id: VOICE_UNLOCK_ALERT_ID, url });
     },
     consider(id: string, url: string) {
-      if (!unlocked || handled.has(id)) return;
-      handled.add(id);
-      const clip = { id, url };
-      if (current) {
-        queued = clip;
-        return;
-      }
-      start(clip);
+      if (handled.has(id)) return;
+      play(id, url);
     },
+    /** User-requested speech: plays even if this id was heard before. */
+    play,
     /** Call inside a tap so later route audio is allowed, without speaking over the mic. */
     prime() {
       unlocked = true;
@@ -156,8 +187,26 @@ export async function registerRouteSpeech(input: {
   destination_name: string;
   duration_seconds: number;
   distance_meters: number;
+  first_instruction?: string;
 }): Promise<SpokenAlert> {
-  const response = await fetch(`${userApiBase()}/api/voice/route`, {
+  return postForAlert("/api/voice/route", input);
+}
+
+/** The backend composes the spoken turn; ElevenLabs reads it by alert id. */
+export async function registerStepSpeech(input: {
+  instruction: string;
+  distance_meters: number;
+  next_instruction?: string;
+}): Promise<SpokenAlert> {
+  return postForAlert("/api/voice/step", input);
+}
+
+export async function registerNotFoundSpeech(query: string): Promise<SpokenAlert> {
+  return postForAlert("/api/voice/not-found", { query });
+}
+
+async function postForAlert(path: string, input: object): Promise<SpokenAlert> {
+  const response = await fetch(`${userApiBase()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
