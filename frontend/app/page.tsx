@@ -303,6 +303,17 @@ function MapScreen() {
     if (!best) return;
     if (best.route !== route) {
       const current = scored.find((candidate) => candidate.route === route);
+      const trainStillActive = predictions.some(
+        (prediction) =>
+          prediction.status !== "cleared" && prediction.status !== "unknown"
+      );
+      if (wasRerouted && trainStillActive && current && !current.blocked) {
+        // Once a clear detour is selected, do not oscillate back to the
+        // nominal fastest route on a transient 10 Hz prediction update.
+        // Release the detour only after the active train risk disappears, or
+        // if the detour itself becomes blocked.
+        return;
+      }
       const trainIsStationary = Boolean(
         simulationTrainStatus && simulationTrainStatus !== "running"
       );
@@ -329,7 +340,7 @@ function MapScreen() {
         setWasRerouted(best.route !== fastest);
       }
     }
-  }, [predictions, route, candidates, simulationTrainStatus]);
+  }, [predictions, route, candidates, simulationTrainStatus, wasRerouted]);
 
   // Ask Google for a fresh set of alternatives as the train advances into a
   // new 50 m crossing window. Calls are capped to one every five seconds;
@@ -388,15 +399,21 @@ function MapScreen() {
             activeRouteRequestRef.current !== activeRequestId
           ) return;
           const scored = scoreRouteCandidates(results, latestPredictionsRef.current);
-          const best = scored[0];
-          if (!best) return;
+          const best = scored.find((candidate) => !candidate.blocked);
+          if (!best) {
+            // Google can return several alternatives that all cross the same
+            // train. Keep the current route instead of briefly drawing one of
+            // those blocked alternatives and switching back on the next tick.
+            setCandidates(results);
+            return;
+          }
           const fastest = [...results].sort(
             (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
           )[0];
           setCandidates(results);
           setRoute(best.route);
           setConflicts(best.conflicts);
-          setWasRerouted(best.route !== fastest);
+          setWasRerouted(routeIsBlocked || best.route !== fastest);
         })
         .catch(() => {
           // Keep the current valid route; the next crossing-state change retries.
