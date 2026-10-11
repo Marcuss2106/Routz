@@ -641,6 +641,9 @@ export async function getDrivingRoutes(
   const parsed: RouteInfo[] = [];
   for (const route of routes) {
     const info = parseRouteInfo(maps, route, destination.name);
+    // The Routes library can leave its own polylines on the last map.
+    // Drop those so a reroute cannot show the previous alternative as well.
+    detachComputedRouteOverlays(route);
     if (info) parsed.push(info);
   }
 
@@ -653,6 +656,36 @@ export async function getDrivingRoutes(
     );
   }
   return parsed;
+}
+
+/** Remove polylines the Routes library attached while computing a route. */
+function detachComputedRouteOverlays(route: any) {
+  const detach = (value: any) => {
+    if (!value || typeof value.setMap !== "function" || typeof value.getPath !== "function") {
+      return;
+    }
+    try {
+      value.setMap(null);
+    } catch {
+      // The overlay was already removed.
+    }
+  };
+  const lists = [route?.polylines];
+  detach(route?.polyline);
+  const legs: any[] = Array.isArray(route?.legs) ? route.legs : [];
+  for (const leg of legs) {
+    lists.push(leg?.polylines);
+    detach(leg?.polyline);
+    const steps: any[] = Array.isArray(leg?.steps) ? leg.steps : [];
+    for (const step of steps) {
+      lists.push(step?.polylines);
+      detach(step?.polyline);
+    }
+  }
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) detach(item);
+  }
 }
 
 /** Parse one raw Routes API route into a RouteInfo. Null when unusable. */

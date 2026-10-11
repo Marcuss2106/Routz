@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Crossing } from "./crossings";
+import { shouldStoreTrainUpdate, type TrainUpdateClock } from "./routeRefresh";
 import {
   parseTrainObservation,
   type BlockagePrediction,
@@ -199,10 +200,13 @@ export function parseSimulationTrainState(raw: unknown): SimulationTrainState {
 }
 
 /** Convert compass heading (clockwise from north) to the map model's CCW-from-east heading. */
-export function simulationStateToObservation(state: SimulationTrainState): TrainObservation {
+export function simulationStateToObservation(
+  state: SimulationTrainState,
+  observedAt: string = new Date().toISOString()
+): TrainObservation {
   return parseTrainObservation({
     trainId: state.train_id,
-    observedAt: new Date().toISOString(),
+    observedAt,
     lat: state.latitude,
     lon: state.longitude,
     speedMps: state.status === "running" ? state.speed_mps * state.playback_speed : 0,
@@ -394,6 +398,7 @@ export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | nul
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let lastClock: TrainUpdateClock | null = null;
 
     const connect = () => {
       if (stopped) return;
@@ -404,11 +409,20 @@ export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | nul
         try {
           const raw = JSON.parse(String(message.data)) as Record<string, unknown>;
           if (raw.type === "simulation_reset") {
+            lastClock = null;
             handlerRef.current(null);
             return;
           }
           if (raw.type !== "train_state_estimate") return;
-          handlerRef.current(parseTrainStateEstimate(raw));
+          const estimate = parseTrainStateEstimate(raw);
+          const clock = {
+            sourceId: `${estimate.simulation_id}:${estimate.train_id}`,
+            sequence: estimate.sequence,
+            simulationTimeS: estimate.simulation_time_s,
+          };
+          if (!shouldStoreTrainUpdate(lastClock, clock)) return;
+          lastClock = clock;
+          handlerRef.current(estimate);
         } catch {
           // Ignore malformed events; the reconnect snapshot resynchronizes state.
         }
@@ -469,10 +483,19 @@ export function useSimulationTrainStream(
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let lastClock: TrainUpdateClock | null = null;
 
     const accept = (raw: unknown) => {
       try {
-        handlerRef.current(parseSimulationTrainState(raw));
+        const state = parseSimulationTrainState(raw);
+        const clock = {
+          sourceId: state.train_id,
+          sequence: state.sequence,
+          simulationTimeS: state.simulation_time_s,
+        };
+        if (!shouldStoreTrainUpdate(lastClock, clock)) return;
+        lastClock = clock;
+        handlerRef.current(state);
       } catch {
         // A later valid snapshot will resynchronize the display.
       }

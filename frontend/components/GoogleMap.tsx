@@ -282,18 +282,19 @@ export default function GoogleMap({
           routeBounds.extend(point);
           return point;
         });
-        if (!activeRoutePolylineRef.current) {
-          activeRoutePolylineRef.current = new maps.Polyline({ map });
-        }
-        activeRoutePolylineRef.current.setOptions({
-          path,
+        const line = activeRoutePolylineRef.current ?? new maps.Polyline({
+          map,
           geodesic: true,
           strokeColor: ROUTE_COLOR,
           strokeOpacity: 1,
           strokeWeight: 5,
           zIndex: 20,
-          map,
         });
+        activeRoutePolylineRef.current = line;
+        // Replace the path in place. A second Polyline would leave the
+        // previous route on screen after a train reroute.
+        line.setPath(path);
+        line.setMap(map);
         hasRoutePoints = true;
       } else {
         activeRoutePolylineRef.current?.setMap?.(null);
