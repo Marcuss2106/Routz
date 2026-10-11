@@ -6,7 +6,7 @@ from .rail_network import RailNetwork
 
 class TrainSimulation:
     train_id = "train-columbia-001"
-    route_id = "columbia-audio-demo-corridor"
+    route_id = "usc-engineering-demo-corridor"
     vehicle_offsets_m = [0.0, 44.0, 80.0, 116.0, 152.0, 188.0]
     train_length_m = 210.0
 
@@ -14,7 +14,7 @@ class TrainSimulation:
         self.network = network
         self.base_speed_mps = speed_mps
         self.playback_speed = 1.0
-        self.distance_m = self.train_length_m
+        self.distance_m = self.network.route_start_distance_m
         self.simulation_time_s = 0.0
         self.sequence = 0
         self.status = "paused"
@@ -45,7 +45,7 @@ class TrainSimulation:
             elif command == "pause" and self.status == "running":
                 self.status = "paused"
             elif command == "restart":
-                self.distance_m = self.train_length_m
+                self.distance_m = self.network.route_start_distance_m
                 self.simulation_time_s = 0.0
                 self.status = "paused"
             elif command == "set_playback_speed":

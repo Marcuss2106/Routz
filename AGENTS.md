@@ -29,7 +29,8 @@ routez/
 ### Ownership and responsibilities
 
 **simulation-frontend**
-- Render railroad track, the cached road layer, verified ground-level crossings, moving train, three microphones, and optional sound-wave visualization.
+- Render railroad track, the cached road layer, verified ground-level crossings, moving train, the three-channel acoustic array, additional geographic microphone markers, and optional sound-wave visualization. Railroad and road layers retain detailed geometry nearby and crossfade to continuous screen-space-width lines at distant zoom levels.
+- Render the USC College of Engineering and Computing landmark and place the live train route/audio trackers from their configured WGS84 coordinates using the shared coordinate conversion.
 - Provide play/pause/reset, speed, direction, noise level, and train-length controls.
 - Use one prerecorded `train.wav` as the common source for three **distinct** virtual microphone streams; model per-microphone sound propagation delay, attenuation, and added noise.
 - Read `shared/simulation_geometry.json` for the track polyline and microphone coordinates.

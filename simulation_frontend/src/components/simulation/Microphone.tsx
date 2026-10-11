@@ -11,8 +11,8 @@ export function Microphone({
   reading,
   selected,
 }: {
-  sensor: AudioSensor;
-  reading: SensorReading;
+  sensor: Pick<AudioSensor, "color">;
+  reading: Pick<SensorReading, "amplitude">;
   selected: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);

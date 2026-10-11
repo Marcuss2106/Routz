@@ -10,6 +10,7 @@ import { Train } from "./Train";
 import { Microphone } from "./Microphone";
 import { SoundWaves } from "./SoundWaves";
 import { CrossingMarkers, RoadLayer } from "./Roads";
+import { BuildingLayer } from "./Buildings";
 import { getAudioSensors, sensorScenePosition, VISUAL_EXAGGERATION } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
 
@@ -85,7 +86,10 @@ function CameraRig({ routeLength }: { routeLength: number }) {
 export default function TrainScene() {
   const railroad = useSimulationStore((state) => state.railroad)!;
   const sensorReadings = useSimulationStore((state) => state.sensorReadings);
-  const sensors = useMemo(() => getAudioSensors(railroad.route.length_m), [railroad.route.length_m]);
+  const sensors = useMemo(
+    () => getAudioSensors(railroad.route.length_m, railroad.audio_trackers ?? []),
+    [railroad.audio_trackers, railroad.route.length_m],
+  );
   return (
     <div className="canvas-wrap">
       <Canvas
@@ -100,22 +104,43 @@ export default function TrainScene() {
         <directionalLight castShadow position={[-9000, 16000, 7000]} intensity={2.2} color="#fff5d8" shadow-mapSize={[2048, 2048]} shadow-camera-far={45000} shadow-camera-left={-18000} shadow-camera-right={18000} shadow-camera-top={18000} shadow-camera-bottom={-18000} />
         <mesh rotation-x={-Math.PI / 2} receiveShadow position-y={-1}><circleGeometry args={[17400, 96]} /><meshStandardMaterial color="#b9c0a5" roughness={1} /></mesh>
         <RoadLayer roads={railroad.roads ?? []} />
+        <BuildingLayer landmarks={railroad.landmarks ?? []} />
         <Railroad lines={railroad.network} route={railroad.route.points} />
         <CrossingMarkers crossings={railroad.crossings ?? []} />
         <SoundWaves route={railroad.route.points} />
         <Train route={railroad.route.points} />
-        {sensors.map((sensor) => {
+        {sensors.map((sensor, index) => {
           const reading = sensorReadings.find((item) => item.sensorId === sensor.id) ?? { sensorId: sensor.id, amplitude: 0.04, decibels: -60, distance: 0, delaySeconds: 0, frequency: 90, waveform: [] };
           const position = sensorScenePosition(railroad.route.points, sensor);
           return (
             <group key={sensor.id} position={position} scale={VISUAL_EXAGGERATION.sensorScale}>
               <Microphone sensor={sensor} reading={reading} selected={reading.amplitude > 0.45} />
-              <Html position={[0, 4.05, 0]} center distanceFactor={950} style={{ pointerEvents: "none" }}>
+              <Html
+                position={[index === 0 ? -1.1 : index === 1 ? 1.1 : 0, 4.05 + index * 0.18, 0]}
+                center
+                distanceFactor={950}
+                zIndexRange={[3, 0]}
+                style={{ pointerEvents: "none" }}
+              >
                 <div className="scene-sensor-label"><strong>{sensor.label}</strong><span>{reading.decibels} dB</span></div>
               </Html>
             </group>
           );
         })}
+        {(railroad.microphone_markers ?? []).map((marker) => (
+          <group key={marker.id} position={marker.position} scale={VISUAL_EXAGGERATION.sensorScale}>
+            <Microphone sensor={{ color: "#a94334" }} reading={{ amplitude: .04 }} selected={false} />
+            <Html
+              position={[0, 4.05, 0]}
+              center
+              distanceFactor={950}
+              zIndexRange={[3, 0]}
+              style={{ pointerEvents: "none" }}
+            >
+              <div className="scene-sensor-label"><strong>{marker.label}</strong></div>
+            </Html>
+          </group>
+        ))}
         <Environment preset="park" environmentIntensity={0.35} />
         <CameraRig routeLength={railroad.route.length_m} />
       </Canvas>

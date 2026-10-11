@@ -26,13 +26,29 @@ def test_coordinate_round_trip():
 
 
 def test_route_is_continuous_and_substantial():
-    _, network = make_network()
-    assert math.isclose(network.route_length_m, network.demo_route_length_m, abs_tol=0.1)
-    assert network.route_length_m < 1000
+    coordinates, network = make_network()
+    start = coordinates.wgs_to_utm(*network.route_start_wgs)
+    end = coordinates.wgs_to_utm(*network.route_end_wgs)
+    assert 1000 < network.route_length_m < 1150
+    assert math.dist(network.route_points_utm[0], start) < 5
+    assert math.dist(network.route_points_utm[-1], end) < 2
     for left, right in zip(network.route_edges, network.route_edges[1:]):
         assert set((network.edges[left].start, network.edges[left].end)) & set(
             (network.edges[right].start, network.edges[right].end)
         )
+
+    payload = network.payload()
+    assert payload["landmarks"][0]["name"] == "USC College of Engineering and Computing"
+    assert math.isfinite(payload["landmarks"][0]["rotation_y_rad"])
+    assert len(payload["audio_trackers"]) == 3
+    tracker_points = [coordinates.wgs_to_utm(item["longitude"], item["latitude"]) for item in payload["audio_trackers"]]
+    assert min(math.dist(first, second) for index, first in enumerate(tracker_points) for second in tracker_points[index + 1:]) > 60
+    assert len(payload["microphone_markers"]) == 34
+    assert payload["microphone_markers"][0]["label"] == "Microphone 4"
+    assert payload["microphone_markers"][-1]["label"] == "Microphone 37"
+    for marker in payload["microphone_markers"]:
+        expected = coordinates.wgs_to_scene(marker["longitude"], marker["latitude"])
+        assert marker["position"] == expected
 
 
 def test_roads_and_declared_ground_crossings_share_scene_coordinates():
@@ -68,7 +84,7 @@ def test_play_pause_restart_and_completion():
         assert (await simulation.snapshot())["distance_along_route_m"] == paused_distance
         await simulation.command({"command": "restart"})
         restarted = await simulation.snapshot()
-        assert restarted["distance_along_route_m"] == simulation.train_length_m
+        assert restarted["distance_along_route_m"] == network.route_start_distance_m
         assert restarted["simulation_time_s"] == 0
         assert all(vehicle["distance_m"] >= 0 for vehicle in restarted["vehicles"])
 

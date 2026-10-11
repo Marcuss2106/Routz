@@ -32,6 +32,31 @@ export interface RailCrossing {
   source: string;
 }
 
+export interface SceneLandmark {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  position: ScenePoint;
+  dimensions_m: ScenePoint;
+  rotation_y_rad: number;
+}
+
+export interface AudioTrackerLocation {
+  id: SensorId;
+  latitude: number;
+  longitude: number;
+  position: ScenePoint;
+}
+
+export interface MicrophoneMarkerLocation {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  position: ScenePoint;
+}
+
 export interface RailroadPayload {
   source: { source: string; retrieved: string; source_updated: string; radius_m: number; feature_count: number };
   coordinate_system: {
@@ -47,7 +72,18 @@ export interface RailroadPayload {
   road_source: { source: string; attribution: string; retrieved: string; radius_m: number; feature_count: number };
   roads: RoadLine[];
   crossings: RailCrossing[];
-  route: { id: string; length_m: number; source_edge_ids: string[]; selection: string; points: ScenePoint[] };
+  landmarks: SceneLandmark[];
+  audio_trackers: AudioTrackerLocation[];
+  microphone_markers: MicrophoneMarkerLocation[];
+  route: {
+    id: string;
+    length_m: number;
+    source_edge_ids: string[];
+    selection: string;
+    requested_start: { latitude: number; longitude: number };
+    requested_end: { latitude: number; longitude: number };
+    points: ScenePoint[];
+  };
 }
 
 export interface VehicleState {
@@ -99,6 +135,8 @@ export interface AudioSensor {
   /** Visual-only placement fields for the live SCDOT route renderer. */
   routeDistanceM: number;
   lateralOffsetM: number;
+  /** Exact WGS84-derived scene placement, independent of acoustic coordinates. */
+  visualScenePosition?: ScenePoint;
 }
 
 export interface SensorReading {

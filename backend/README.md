@@ -15,6 +15,8 @@ PYTHONPATH=src .venv/bin/uvicorn backend.main:app --reload --port 8000
 
 Normal startup reads the committed rail and road caches in `src/backend/data/` and makes no external request. Optional settings are documented in `.env.example`.
 
+The expanded road cache is already downloaded and committed at `src/backend/data/roads_columbia.geojson`; running the application does **not** require Overpass or OpenStreetMap API access. Restart the backend after replacing or updating the cache because geographic layers are loaded once when the process starts. `GET /health` reports `road_radius_m`, `road_count`, and `road_source` so the loaded cache can be verified directly.
+
 Refresh the cache with:
 
 ```bash
@@ -24,7 +26,7 @@ PYTHONPATH=src .venv/bin/python -m backend.fetch_roads
 
 The fetcher inspects the public SCDOT layer, requests every page of `ACTIVE` and `SPUR` records intersecting a 16,093.44 m search radius, requests WGS84 output, then uses Shapely and pyproj to clip every line to the true circle in UTM 17N. It never substitutes fictional geometry.
 
-The road fetcher caches major, secondary, and local OpenStreetMap roads within 5 km using Overpass. It also caches declared `railway=level_crossing` nodes. At startup, bridge, tunnel, and nonzero-layer roads are excluded from crossing candidates; declared ground crossings are snapped to the nearest SCDOT rail in UTM meters before all layers are converted by the same `CoordinateSystem`.
+The road fetcher caches major, secondary, and local OpenStreetMap roads within the same 10-mile (16,093.44 m) radius as the railroad network. It queries the bounding area in resumable tiles, deduplicates ways at tile boundaries, falls back from public Overpass instances to the standard OpenStreetMap map API when necessary, and clips the merged geometry to the exact metric circle. It also caches declared `railway=level_crossing` nodes. At startup, bridge, tunnel, and nonzero-layer roads are excluded from crossing candidates; declared ground crossings are snapped to the nearest SCDOT rail in UTM meters before all layers are converted by the same `CoordinateSystem`.
 
 ### HTTP and WebSocket contract
 
@@ -48,11 +50,11 @@ State includes `train_id`, monotonic `sequence`, `simulation_time_s`, `status`, 
 
 Cached GeoJSON is WGS84 (`EPSG:4326`, `[longitude, latitude]`). Movement and clipping use UTM zone 17N (`EPSG:32617`) in meters. The shared origin is downtown Columbia at 34.0007, -81.0348. Three.js X is east, Y is up, and Z is south; `coordinates.py` makes this reversible.
 
-The graph joins only source feature endpoints within 2.5 m and never creates a node merely where lines cross visually. It first finds the substantial connected 34.5 km corridor, then selects a continuous 800 m downtown demonstration section from it. The API and renderer still include the entire clipped railroad network. Roads use the same WGS84 → UTM 17N → Three.js conversion, so roads, crossings, and rails share one coordinate frame.
+The graph joins only source feature endpoints within 2.5 m and never creates a node merely where lines cross visually. The live demo route snaps the requested USC-area start (33.98918866218069, -81.03289988338747) and end (33.99336818146877, -81.02246011939191) to the nearest mutually connected SCDOT rails. The API and renderer still include the entire clipped railroad network, while the offline generator continues to use the complete graph. Roads, the USC College of Engineering and Computing landmark, audio trackers, crossings, and rails use the same WGS84 → UTM 17N → Three.js conversion.
 
 ### Data provenance
 
-Rail source: SCDOT `Railroads_RO/MapServer/12`, owned by the South Carolina Department of Traffic Engineering and SCDOT GIS Office. Road and declared level-crossing source: OpenStreetMap contributors via Overpass API. Both caches were retrieved October 10, 2026; exact retrieval/filter/CRS details are embedded in their top-level `metadata` objects.
+Rail source: SCDOT `Railroads_RO/MapServer/12`, owned by the South Carolina Department of Traffic Engineering and SCDOT GIS Office. Road and declared level-crossing source: OpenStreetMap contributors via the public APIs recorded in the road cache metadata. Both caches were retrieved October 10, 2026; exact retrieval/filter/CRS details are embedded in their top-level `metadata` objects.
 
 ## User voice API
 

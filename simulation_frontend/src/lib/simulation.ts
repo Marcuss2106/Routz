@@ -10,7 +10,7 @@ import {
   distanceOnGround,
   railPositionToGround,
 } from "@/lib/geometry";
-import type { AudioSensor, ScenePoint, SensorReading, TrainAudioSource, TrainState } from "@/types/simulation";
+import type { AudioSensor, AudioTrackerLocation, ScenePoint, SensorReading, TrainAudioSource, TrainState } from "@/types/simulation";
 
 export {
   AUDIO_CHUNK_DURATION_MS,
@@ -38,19 +38,34 @@ export const VEHICLE_OFFSETS_M = [0, 44, 80, 116, 152, 188] as const;
  * x/y coordinates are always taken from shared/simulation_geometry.json when
  * an audio chunk is built.
  */
-export function getAudioSensors(routeLengthM: number): AudioSensor[] {
+export function getAudioSensors(routeLengthM: number, trackers: AudioTrackerLocation[] = []): AudioSensor[] {
   const arrayStartM = routeLengthM * 0.34;
   const visualArrayLengthM = Math.min(1000, routeLengthM * 0.2);
-  return SENSOR_DEFINITIONS.map((sensor) => ({
-    ...sensor,
-    routeDistanceM: arrayStartM + (sensor.position[0] / TRACK_LENGTH_M) * visualArrayLengthM,
-    lateralOffsetM: sensor.position[2],
-  }));
+  return SENSOR_DEFINITIONS.map((sensor) => {
+    const tracker = trackers.find((item) => item.id === sensor.id);
+    return {
+      ...sensor,
+      routeDistanceM: arrayStartM + (sensor.position[0] / TRACK_LENGTH_M) * visualArrayLengthM,
+      lateralOffsetM: sensor.position[2],
+      visualScenePosition: tracker?.position,
+    };
+  });
 }
 
 export function sampleRoute(points: ScenePoint[], distanceM: number) {
   if (points.length < 2) return { position: [0, 0, 0] as ScenePoint, rotationY: 0 };
-  let remaining = Math.max(0, distanceM);
+  if (distanceM < 0) {
+    const first = points[0];
+    const second = points[1];
+    const dx = second[0] - first[0];
+    const dz = second[2] - first[2];
+    const length = Math.hypot(dx, dz) || 1;
+    return {
+      position: [first[0] + dx * (distanceM / length), 3, first[2] + dz * (distanceM / length)] as ScenePoint,
+      rotationY: Math.atan2(dx, dz),
+    };
+  }
+  let remaining = distanceM;
   for (let index = 0; index < points.length - 1; index += 1) {
     const first = points[index];
     const second = points[index + 1];
@@ -74,6 +89,7 @@ export function formatDistance(meters: number) {
 }
 
 export function sensorScenePosition(route: ScenePoint[], sensor: AudioSensor): ScenePoint {
+  if (sensor.visualScenePosition) return sensor.visualScenePosition;
   const sample = sampleRoute(route, sensor.routeDistanceM);
   const normalX = Math.cos(sample.rotationY);
   const normalZ = -Math.sin(sample.rotationY);

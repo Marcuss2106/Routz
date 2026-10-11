@@ -49,6 +49,8 @@ async def health() -> dict:
         "data_loaded": True,
         "route_length_m": network.route_length_m,
         "road_count": len(geographic_layers.roads),
+        "road_radius_m": geographic_layers.source_metadata.get("radius_m"),
+        "road_source": geographic_layers.source_metadata.get("source"),
         "ground_crossing_count": len(geographic_layers.crossings),
     }
 
