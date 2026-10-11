@@ -30,8 +30,7 @@ export interface PlaceResult {
    */
   placeRef?: any;
   /**
-   * Address string for the Routes API. Spoken routes use this when Places
-   * and Geocoding are unavailable, so the name never has to be geocoded first.
+   * Address string for the Routes API when there is no Place instance.
    */
   addressQuery?: string;
 }
@@ -369,6 +368,103 @@ export async function geocodeAddress(query: string): Promise<PlaceResult[]> {
     });
   }
   return places;
+}
+
+/** "the hospital", "a hospital", "nearest hospital", and "hospitals". */
+export function isHospitalQuery(query: string): boolean {
+  const withoutArticle = query.trim().replace(/^(?:the|a|an)\s+/i, "");
+  return /^(?:nearest\s+)?hospitals?$/i.test(withoutArticle);
+}
+
+function coordinateOf(location: any): RoutzCoordinate | null {
+  const lat = typeof location?.lat === "function" ? location.lat() : location?.lat;
+  const lng = typeof location?.lng === "function" ? location.lng() : location?.lng;
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { latitude: lat, longitude: lng };
+}
+
+function placeResultFromNearby(place: any, index: number): PlaceResult | null {
+  const coordinate = coordinateOf(place?.location);
+  if (!coordinate) return null;
+  const name = asText(place.displayName) ?? "Hospital";
+  const formattedAddress = asText(place.formattedAddress) ?? name;
+  const placeId = asText(place.id) ?? undefined;
+  return {
+    id:
+      placeId ??
+      `hospital-${coordinate.latitude.toFixed(5)}-${coordinate.longitude.toFixed(5)}-${index}`,
+    name,
+    formattedAddress,
+    coordinate,
+    ...(placeId ? { placeId } : {}),
+    placeRef: place,
+  };
+}
+
+/**
+ * Nearest general hospital to `near`, ranked by distance. The broader
+ * "hospital" type also matches clinics, so this asks for general_hospital.
+ * Tries 20 km, then 50 km. Returns null when Nearby Search finds nothing.
+ */
+export async function searchNearestHospital(
+  near: RoutzCoordinate
+): Promise<PlaceResult | null> {
+  const maps = await loadGoogleMaps();
+  const searchNearby = maps.places?.Place?.searchNearby;
+  if (typeof searchNearby !== "function") return null;
+  const rankPreference =
+    maps.places.SearchNearbyRankPreference?.DISTANCE ?? "DISTANCE";
+
+  for (const radius of [20_000, 50_000]) {
+    let response: any;
+    try {
+      response = await searchNearby.call(maps.places.Place, {
+        fields: ["displayName", "location", "formattedAddress", "id", "primaryType"],
+        locationRestriction: {
+          center: { lat: near.latitude, lng: near.longitude },
+          radius,
+        },
+        includedPrimaryTypes: ["general_hospital"],
+        maxResultCount: 10,
+        rankPreference,
+        language: "en",
+        region: "us",
+      });
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.error("Routz nearest-hospital search failed:", err);
+      }
+      return null;
+    }
+    const found: any[] = Array.isArray(response?.places) ? response.places : [];
+    for (const [index, place] of found.entries()) {
+      const primaryType = asText(place?.primaryType);
+      if (primaryType && primaryType !== "general_hospital") continue;
+      const mapped = placeResultFromNearby(place, index);
+      if (mapped) return mapped;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a spoken name the same way typed search does: Places autocomplete,
+ * then Geocoding. "hospital" is the nearest hospital to `near`.
+ */
+export async function resolveSpokenPlace(
+  query: string,
+  near?: RoutzCoordinate
+): Promise<PlaceResult | null> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return null;
+  if (isHospitalQuery(trimmed) && near) {
+    const nearest = await searchNearestHospital(near);
+    if (nearest) return nearest;
+  }
+  const lookup = isHospitalQuery(trimmed) ? "hospital" : trimmed;
+  const places = await searchPlaces(lookup);
+  return places[0] ?? null;
 }
 
 export interface ReverseGeocodeResult {

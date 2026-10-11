@@ -15,6 +15,7 @@ import VoiceRouteButton from "@/components/VoiceRouteButton";
 import {
   getDrivingRoutes,
   getGoogleMapsApiKey,
+  resolveSpokenPlace,
   reverseGeocode,
   type PlaceResult,
   type RouteInfo,
@@ -24,23 +25,6 @@ import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/
 import type { BlockagePrediction, TrainObservation } from "@/lib/trains";
 import { estimateToObservation, useTrainStream, type TrainStateEstimateEvent } from "@/lib/trainStream";
 import { registerRouteSpeech, type RouteTranscript } from "@/lib/voice";
-
-/** Bias a spoken name to the demo city so Routes can resolve it as an address. */
-function spokenPlace(query: string): PlaceResult | null {
-  const trimmed = query.trim();
-  if (trimmed.length < 2) return null;
-  const withoutArticle = trimmed.replace(/^(the|a|an)\s+/i, "");
-  const address = /columbia|,\s*sc\b|south carolina/i.test(withoutArticle)
-    ? withoutArticle
-    : `${withoutArticle}, Columbia, SC`;
-  return {
-    id: `spoken-${address.toLowerCase()}`,
-    name: trimmed,
-    formattedAddress: address,
-    coordinate: { latitude: 33.98924, longitude: -81.02982 },
-    addressQuery: address,
-  };
-}
 
 /** Demo start when the browser cannot provide a GPS fix. */
 function simulatedHere(): PlaceResult {
@@ -209,18 +193,22 @@ function MapScreen() {
     async (request: RouteTranscript) => {
       const destinationQuery = request.destination_query;
       if (!destinationQuery) return;
+      setRouteError(null);
       const nextOrigin = request.use_current_location
         ? await locate()
-        : spokenPlace(request.origin_query ?? "");
-      const nextDestination = spokenPlace(destinationQuery);
-      if (!nextDestination) {
-        setRouteError(`Could not find ${destinationQuery}. Try a more specific name.`);
-        return;
-      }
+        : await resolveSpokenPlace(request.origin_query ?? "");
       if (!nextOrigin) {
         setRouteError(
           `Could not find ${request.origin_query ?? "the start"}. Try a more specific name.`
         );
+        return;
+      }
+      const nextDestination = await resolveSpokenPlace(
+        destinationQuery,
+        nextOrigin.coordinate
+      );
+      if (!nextDestination) {
+        setRouteError(`Could not find ${destinationQuery}. Try a more specific name.`);
         return;
       }
       setOrigin(nextOrigin);
