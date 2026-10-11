@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import ActiveRoute from "@/components/ActiveRoute";
 import GoogleMap from "@/components/GoogleMap";
 import RouteForm from "@/components/RouteForm";
@@ -74,7 +74,9 @@ function MapScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(320);
+  const [sheetOpen, setSheetOpen] = useState(true);
   const sheetRef = useRef<HTMLDivElement | null>(null);
+  const sheetDrag = useRef({ y: 0, dragged: false, active: false });
 
   const altPaths = useMemo(() => {
     if (!route || candidates.length < 2) return null;
@@ -277,6 +279,39 @@ function MapScreen() {
 
   const routeSelected = Boolean(route && origin && destination);
 
+  function beginSheetDrag(event: PointerEvent<HTMLButtonElement>) {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is unavailable until the browser has a real pointer.
+    }
+    sheetDrag.current = { y: event.clientY, dragged: false, active: true };
+  }
+
+  function moveSheetDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (!sheetDrag.current.active) return;
+    if (Math.abs(event.clientY - sheetDrag.current.y) > 12) {
+      sheetDrag.current.dragged = true;
+    }
+  }
+
+  function endSheetDrag(event: PointerEvent<HTMLButtonElement>) {
+    if (!sheetDrag.current.active) return;
+    const dy = event.clientY - sheetDrag.current.y;
+    sheetDrag.current.active = false;
+    if (!sheetDrag.current.dragged) return;
+    if (dy > 28) setSheetOpen(false);
+    else if (dy < -28) setSheetOpen(true);
+  }
+
+  function toggleSheet() {
+    if (sheetDrag.current.dragged) {
+      sheetDrag.current.dragged = false;
+      return;
+    }
+    setSheetOpen((open) => !open);
+  }
+
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-[#E8EEF4] text-[#0B1B33]">
       <div className="absolute inset-0">
@@ -361,10 +396,37 @@ function MapScreen() {
               ref={sheetRef}
               className="pointer-events-auto max-h-[78dvh] w-full max-w-md overflow-y-auto rounded-t-[28px] bg-white px-4 pt-2 shadow-[0_-12px_40px_rgba(11,27,51,0.2)] pb-[max(0.85rem,env(safe-area-inset-bottom))]"
             >
-              <div
-                className="mx-auto mb-3 mt-1 h-1.5 w-10 rounded-full bg-[#0B1B33]/15"
-                aria-hidden
-              />
+              <button
+                type="button"
+                aria-expanded={sheetOpen}
+                aria-controls="routz-route-sheet"
+                aria-label={sheetOpen ? "Pull down to hide route search" : "Pull up route search"}
+                onPointerDown={beginSheetDrag}
+                onPointerMove={moveSheetDrag}
+                onPointerUp={endSheetDrag}
+                onPointerCancel={endSheetDrag}
+                onClick={toggleSheet}
+                className="flex w-full touch-none flex-col items-center py-2"
+              >
+                <span className="h-1.5 w-10 rounded-full bg-[#0B1B33]/20" />
+                {!sheetOpen ? (
+                  <span className="mt-2 flex items-center gap-1.5 text-[15px] font-semibold text-[#0B1B33]">
+                    Where are you going?
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4 rotate-180 text-[#0B1B33]/45"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.4}
+                      aria-hidden
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+                    </svg>
+                  </span>
+                ) : null}
+              </button>
+              {sheetOpen ? (
+              <div id="routz-route-sheet" className="mt-3">
               <RouteForm
                 origin={origin}
                 destination={destination}
@@ -392,6 +454,8 @@ function MapScreen() {
                   SIMULATION — train + crossing predictions are simulated, not for emergency use.
                 </p>
               </div>
+              </div>
+              ) : null}
             </div>
           </div>
         </>
