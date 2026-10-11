@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate a reproducible, judge-facing report for the acoustic state path.
+"""Generate a reproducible report for the stationary-window acoustic contract.
 
-This is a validation harness, not a field-accuracy claim. It creates synthetic
-microphone captures from the repository's train recording, then evaluates the
-same localization, tracking, coordinate conversion, direction, and lifecycle
-code used by the live simulation.
+This is a contract microbenchmark, not a field-accuracy claim or a moving-train
+performance benchmark. It creates synthetic microphone captures from the
+repository's train recording, then evaluates the same localization, tracking,
+coordinate conversion, direction, and lifecycle code used by the live
+simulation. Use scripts/e2e_trials.py for continuously moving-source trials.
 """
 
 from __future__ import annotations
@@ -259,7 +260,7 @@ def rejected_audio_validation() -> dict[str, Any]:
 
 def make_report() -> dict[str, Any]:
     return {
-        "report": "Routz acoustic validation",
+        "report": "Routz acoustic contract microbenchmark",
         "generated_by": "scripts/acoustic_validation.py",
         "methodology": {
             "audio_source": "repository train.wav",
@@ -268,9 +269,11 @@ def make_report() -> dict[str, Any]:
             ),
             "ground_truth_available_to_estimator": False,
             "field_validation": False,
+            "moving_source_benchmark": False,
             "note": (
-                "This report validates the deterministic simulation path; "
-                "it is not a field-accuracy claim."
+                "This report validates stationary synthetic windows and the "
+                "five-value event contract; it is not a field-accuracy or "
+                "moving-source performance claim."
             ),
         },
         "required_state": [
@@ -300,17 +303,19 @@ def markdown_report(report: dict[str, Any]) -> str:
     length = tracking["length"]
     complete = tracking["complete_state_event"]
     lines = [
-        "# Routz Acoustic Validation",
+        "# Routz Acoustic Contract Microbenchmark",
         "",
         "> Simulation validation only. This report is not field accuracy evidence.",
         "",
         "## Method",
         "",
-        "The harness creates deterministic microphone captures from train.wav, "
+        "The harness creates deterministic stationary-source microphone captures "
+        "from train.wav, "
         "sends only microphone channels and microphone geometry into the "
         "localization/tracking code, and compares the returned estimates with "
         "hidden test values. Ground-truth train position is not passed to the "
-        "estimator.",
+        "estimator. Continuously moving-source performance is measured separately "
+        "by scripts/e2e_trials.py.",
         "",
         "## Results",
         "",

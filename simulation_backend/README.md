@@ -45,12 +45,14 @@ Run the inference tests with:
 
 ## Validation report
 
-From the repository root, generate a reproducible report for the five-value
-acoustic state contract:
+From the repository root, generate a reproducible stationary-window
+microbenchmark for the five-value acoustic state contract:
 
     PYTHONPATH=simulation_backend python3 scripts/acoustic_validation.py
 
 The report is written to artifacts/acoustic-validation/. It evaluates the
 same localization, Kalman tracking, coordinate conversion, direction, and
 train-lifecycle code used by the live path. Its captures are synthetic and it
-must not be described as field accuracy evidence.
+must not be described as field accuracy evidence or as moving-train performance.
+Use scripts/e2e_trials.py for the continuously moving-source trial and its
+fix-rate, speed, and crossing-ETA metrics.
