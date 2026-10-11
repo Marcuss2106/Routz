@@ -128,9 +128,15 @@ export function getRoutzWsUrl(): string {
   return api.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:") + "/ws/updates";
 }
 
-/** Railroad clock API. It is separate from the acoustic/user API on port 8002. */
+/**
+ * Railroad clock API. It is separate from the acoustic/user API on port 8002.
+ * The localhost default applies only to development; a production build with
+ * no configured URL returns "" so a deployed page never calls the viewer's own
+ * localhost.
+ */
 export function getSimulationApiUrl(): string {
-  return (process.env.NEXT_PUBLIC_SIMULATION_API_URL ?? "http://localhost:8000")
+  const fallback = process.env.NODE_ENV === "production" ? "" : "http://localhost:8000";
+  return (process.env.NEXT_PUBLIC_SIMULATION_API_URL ?? fallback)
     .trim()
     .replace(/\/+$/, "");
 }
@@ -140,9 +146,9 @@ export function getSimulationWsUrl(): string {
     .trim()
     .replace(/\/+$/, "");
   if (configured) return configured;
-  return getSimulationApiUrl()
-    .replace(/^http:/i, "ws:")
-    .replace(/^https:/i, "wss:") + "/ws/simulation";
+  const api = getSimulationApiUrl();
+  if (!api) return "";
+  return api.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:") + "/ws/simulation";
 }
 
 function finiteNumber(value: unknown, field: string): number {
@@ -455,6 +461,11 @@ export function useSimulationTrainStream(
   useEffect(() => {
     const apiUrl = getSimulationApiUrl();
     const wsUrl = getSimulationWsUrl();
+    if (!apiUrl || !wsUrl) {
+      // Railroad clock is not configured for this build; stay offline.
+      setStatus("offline");
+      return;
+    }
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;

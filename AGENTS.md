@@ -279,8 +279,12 @@ AUDIO_SAMPLE_RATE_HZ=16000
 ```dotenv
 NEXT_PUBLIC_USER_API_URL=http://localhost:8002
 NEXT_PUBLIC_USER_WS_URL=ws://localhost:8002/ws/updates
+NEXT_PUBLIC_SIMULATION_API_URL=http://localhost:8000
+NEXT_PUBLIC_SIMULATION_WS_URL=ws://localhost:8000/ws/simulation
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=replace-with-browser-restricted-key
 ```
+
+The map also follows the railroad clock on port 8000 through `NEXT_PUBLIC_SIMULATION_API_URL` / `NEXT_PUBLIC_SIMULATION_WS_URL`. The localhost default applies only in development; a production build with these unset stays offline instead of calling the viewer's localhost. On Vercel, set all of these to HTTPS/WSS URLs (for example `https://routz-rail.duckdns.org`, `wss://routz-rail.duckdns.org/ws/simulation`, `https://routz-user.duckdns.org`, `wss://routz-user.duckdns.org/ws/updates`) and redeploy, because `NEXT_PUBLIC_*` values are compiled in at build time. Browsers block `http://`/`ws://` from an HTTPS page, so a TLS proxy (Caddy) is required in front of ports 8000, 8001, and 8002.
 
 `backend/.env.example` (railroad motion and the user voice API):
 

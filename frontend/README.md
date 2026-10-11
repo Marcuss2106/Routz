@@ -46,9 +46,13 @@ cd frontend
 npm run dev
 ```
 
-The defaults are `http://localhost:8000` and `ws://localhost:8000/ws/simulation`.
+The development defaults are `http://localhost:8000` and `ws://localhost:8000/ws/simulation`.
 Override them with `NEXT_PUBLIC_SIMULATION_API_URL` and
 `NEXT_PUBLIC_SIMULATION_WS_URL` in `.env.local`, then restart Next.js.
+
+Production builds (for example on Vercel) have no localhost default: set both
+variables to the HTTPS/WSS URLs of the railroad service and redeploy, otherwise
+the live railroad feed stays offline.
 
 ## Acoustic backend (optional)
 
