@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node -e 'const jiti = require(\"jiti\")(process.cwd() + \"/index.js\"); jiti(\"./lib/routeDetour.test.ts\"); jiti(\"./lib/routeRefresh.test.ts\");'",
     "lint": "eslint"
   },
   "dependencies": {
