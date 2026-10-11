@@ -13,9 +13,10 @@ class Settings:
     radius_m: float = float(os.getenv("RAIL_RADIUS_M", "16093.44"))
     base_speed_mps: float = float(os.getenv("TRAIN_SPEED_MPS", "16.0"))
     allowed_origins: tuple[str, ...] = tuple(
-        value.strip()
+        value.strip().rstrip("/")
         for value in os.getenv(
-            "SIMULATION_ALLOWED_ORIGINS", "http://localhost:3000"
+            "SIMULATION_ALLOWED_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100",
         ).split(",")
         if value.strip()
     )
