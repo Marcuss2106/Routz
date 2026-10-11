@@ -14,6 +14,15 @@ logger = logging.getLogger("user_backend")
 
 Synthesizer = Callable[[str], Awaitable[bytes]]
 
+# A calm, warm delivery keeps short route and crossing alerts pleasant without
+# making them sound theatrical. All server-composed speech uses this profile.
+PLEASANT_VOICE_SETTINGS = {
+    "stability": 0.56,
+    "similarity_boost": 0.78,
+    "style": 0.18,
+    "use_speaker_boost": True,
+}
+
 
 class VoiceUnavailable(Exception):
     """Synthesis is not configured or the provider rejected the request."""
@@ -55,7 +64,11 @@ async def synthesize_elevenlabs(
             "xi-api-key": settings.elevenlabs_api_key,
             "Accept": "audio/mpeg",
         },
-        json={"text": text, "model_id": "eleven_flash_v2_5"},
+        json={
+            "text": text,
+            "model_id": "eleven_flash_v2_5",
+            "voice_settings": PLEASANT_VOICE_SETTINGS,
+        },
         timeout=20.0,
     )
     if response.status_code >= 400:

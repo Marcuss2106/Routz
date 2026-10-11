@@ -42,6 +42,10 @@ microphone audio + microphone geometry
   -> Google map and acoustic-driven 3D train
 ```
 
+The 3D panel's optional **Voice cues** button narrates acoustic connection and
+train lifecycle changes with the browser's preferred English voice. The map's
+route and crossing alerts use the user backend's calm ElevenLabs voice profile.
+
 The simulator may use ground truth internally to synthesize extended-source
 audio and to render a debug truth overlay. Ground truth is never placed in the
 audio wire contract or used by the acoustic estimator. The visible 3D train

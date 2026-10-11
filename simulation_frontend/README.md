@@ -17,6 +17,11 @@ attenuation, rear cutoff, and configurable noise. If no
 audio asset is available, the same pipeline uses a deterministic synthetic
 train signal so the scene remains usable.
 
+The **Voice cues** control provides optional, calm browser narration for the
+acoustic array connection and train lifecycle (`detected`, `length_pending`,
+`tracking`, and `cleared`). These cues are presentation-only: they are never
+sent to the acoustic WebSocket or mixed into the microphone samples.
+
 The optional **Stream** control sends synchronized JSON WebSocket chunks to
 `NEXT_PUBLIC_SIMULATION_WS_URL` (default: `ws://localhost:8000/ws/simulation`).
 Streaming is off by default. The simulation backend accepts those PCM16 chunks

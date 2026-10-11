@@ -60,6 +60,10 @@ Rail source: SCDOT `Railroads_RO/MapServer/12`, owned by the South Carolina Depa
 
 Accepts simulated crossing predictions, broadcasts a spoken alert when the situation changes, and serves that audio from ElevenLabs. This process is separate from the railroad app so the two do not share a port.
 
+Short route, crossing, and clearance messages use one calm voice profile with
+moderate stability and a light delivery style so the guidance remains clear
+and pleasant during repeated demo runs.
+
 ```bash
 cd backend
 uv run user-backend
