@@ -247,21 +247,22 @@ export default function GoogleMap({
         }
       }
 
-      // Acoustic estimate: this is the detected train shown to the user.
-      if (estimate && estimate.latitude !== null && estimate.longitude !== null) {
+      // Acoustic estimate: this is the detected train shown to the user. It is
+      // drawn from map_state, the estimate re-expressed on the demo corridor.
+      const mapState = estimate?.map_state ?? null;
+      if (estimate && mapState) {
         try {
-          const length = estimate.length_m ?? estimate.provisional_length_m ?? 0;
-          const heading = (estimate.direction_deg_from_east ?? 0) * (Math.PI / 180);
+          const length = mapState.length_m ?? mapState.provisional_length_m ?? 0;
+          const heading = (mapState.direction_deg_from_east ?? 0) * (Math.PI / 180);
           const east = Math.cos(heading);
           const north = Math.sin(heading);
-          const center = { lat: estimate.latitude, lon: estimate.longitude };
-          const front = offsetLatLon(center.lat, center.lon, east * length / 2, north * length / 2);
-          const rear = offsetLatLon(center.lat, center.lon, -east * length / 2, -north * length / 2);
-          const frontPos = { lat: front.lat, lng: front.lon };
+          // map_state reports the leading point; the body trails behind it.
+          const rear = offsetLatLon(mapState.latitude, mapState.longitude, -east * length, -north * length);
+          const frontPos = { lat: mapState.latitude, lng: mapState.longitude };
           const marker = new maps.Marker({
             position: frontPos,
             map,
-            title: `Acoustic estimate ${estimate.train_id} · ${estimate.status} · position ±${Math.round(estimate.uncertainty.position_m ?? 0)} m`,
+            title: `Simulated acoustic estimate ${estimate.train_id} · ${estimate.status}${mapState.length_m === null && length > 0 ? " · length provisional" : ""}`,
             icon: { url: trainIcon("#7C3AED"), scaledSize: new maps.Size(34, 34) },
           });
           overlaysRef.current.push(marker);

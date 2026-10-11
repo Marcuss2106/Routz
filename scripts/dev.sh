@@ -13,6 +13,8 @@ set -euo pipefail
 #   ROUTZ_SIMULATION_PYTHON=/path/to/python
 #   ROUTZ_NODE_DIR=/path/to/node/bin
 #   ROUTZ_ENV_FILE=/path/to/env-file
+#   ROUTZ_PHONE_HOST=192.168.1.20   laptop LAN IP; serves the map to an iPhone
+#                                   on the same Wi-Fi (see README, "iPhone")
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROUTZ_ENV_FILE:-$PROJECT_ROOT/deploy/.env}"
@@ -85,13 +87,23 @@ for frontend_dir in "$PROJECT_ROOT/frontend" "$PROJECT_ROOT/simulation_frontend"
   fi
 done
 
+PHONE_HOST="${ROUTZ_PHONE_HOST:-}"
+BIND_HOST="127.0.0.1"
+PHONE_ORIGINS=""
+if [[ -n "$PHONE_HOST" ]]; then
+  BIND_HOST="0.0.0.0"
+  PHONE_ORIGINS=",http://$PHONE_HOST:3000,http://$PHONE_HOST:3100"
+  export ROUTZ_PHONE_HOST="$PHONE_HOST"
+fi
+API_HOST="${PHONE_HOST:-127.0.0.1}"
+
 export INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:-local-dev-token}"
 export USER_BACKEND_PORT="${USER_BACKEND_PORT:-8002}"
-export USER_ALLOWED_ORIGINS="${USER_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3100,http://127.0.0.1:3000,http://127.0.0.1:3100}"
+export USER_ALLOWED_ORIGINS="${USER_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3100,http://127.0.0.1:3000,http://127.0.0.1:3100$PHONE_ORIGINS}"
 export SIMULATION_ALLOWED_ORIGINS="${SIMULATION_ALLOWED_ORIGINS:-$USER_ALLOWED_ORIGINS}"
 export USER_BACKEND_PREDICTIONS_URL="${USER_BACKEND_PREDICTIONS_URL:-http://127.0.0.1:8002/api/predictions}"
-export NEXT_PUBLIC_USER_API_URL="${NEXT_PUBLIC_USER_API_URL:-http://127.0.0.1:8002}"
-export NEXT_PUBLIC_USER_WS_URL="${NEXT_PUBLIC_USER_WS_URL:-ws://127.0.0.1:8002/ws/updates}"
+export NEXT_PUBLIC_USER_API_URL="${NEXT_PUBLIC_USER_API_URL:-http://$API_HOST:8002}"
+export NEXT_PUBLIC_USER_WS_URL="${NEXT_PUBLIC_USER_WS_URL:-ws://$API_HOST:8002/ws/updates}"
 export NEXT_PUBLIC_ROUTZ_API_URL="${NEXT_PUBLIC_ROUTZ_API_URL:-$NEXT_PUBLIC_USER_API_URL}"
 export NEXT_PUBLIC_ROUTZ_WS_URL="${NEXT_PUBLIC_ROUTZ_WS_URL:-$NEXT_PUBLIC_USER_WS_URL}"
 export NEXT_PUBLIC_SIMULATION_API_URL="${NEXT_PUBLIC_SIMULATION_API_URL:-http://127.0.0.1:8000}"
@@ -140,7 +152,7 @@ echo "Starting railroad backend on :8000"
 run_background env PYTHONPATH="$PROJECT_ROOT/backend/src" "$BACKEND_PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 echo "Starting user backend on :8002"
-run_background env PYTHONPATH="$PROJECT_ROOT/backend/src" "$BACKEND_PYTHON" -m uvicorn backend.user_api:app --host 127.0.0.1 --port 8002
+run_background env PYTHONPATH="$PROJECT_ROOT/backend/src" "$BACKEND_PYTHON" -m uvicorn backend.user_api:app --host "$BIND_HOST" --port 8002
 
 echo "Starting acoustic backend on :8001"
 run_background env PYTHONPATH="$PROJECT_ROOT/simulation_backend" "$SIMULATION_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8001
@@ -150,7 +162,7 @@ wait_for_health "user backend" "http://127.0.0.1:8002/health"
 wait_for_health "acoustic backend" "http://127.0.0.1:8001/health"
 
 echo "Starting user frontend on :3000"
-(cd "$PROJECT_ROOT/frontend" && npm run dev -- --hostname 127.0.0.1 --port 3000) &
+(cd "$PROJECT_ROOT/frontend" && npm run dev -- --hostname "$BIND_HOST" --port 3000) &
 PIDS+=("$!")
 
 echo "Starting 3D simulation frontend on :3100"

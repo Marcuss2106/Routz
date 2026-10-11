@@ -96,8 +96,11 @@ export function findRouteConflicts(
     const blockEndMs = Date.parse(p.blockEndUtc) + graceS * 1000;
 
     // Driver arrives before the block starts (with margin) => no conflict.
-    // Driver arrives after it clears => no conflict.
-    if (driverArrivalMs < blockStartMs || driverArrivalMs > blockEndMs) continue;
+    // Driver arrives after it clears => no conflict. While the acoustic length
+    // is only provisional, blockEnd is a lower bound, so a later arrival is not
+    // known to be clear and stays a conflict.
+    if (driverArrivalMs < blockStartMs) continue;
+    if (!p.lengthProvisional && driverArrivalMs > blockEndMs) continue;
 
     conflicts.push({
       crossingId: p.crossingId,

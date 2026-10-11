@@ -86,6 +86,27 @@ canonical estimate on the user-backend WebSocket, checks that no simulator
 truth or audio crossed that boundary, and verifies that reset accepts sequence
 `0` again.
 
+### Live demo check and trials
+
+With the Python services running, `scripts/e2e_live_demo.py` streams a moving
+synthetic source to the acoustic WebSocket and prints what the user WebSocket
+returns: anchored map positions, per-crossing blockage windows, and the spoken
+alert text. `scripts/e2e_trials.py` scores localization, speed, direction and
+crossing-ETA error across speeds and noise levels (simulation only).
+
+### iPhone Safari rehearsal
+
+```bash
+ROUTZ_PHONE_HOST=192.168.1.20 ./scripts/dev.sh   # your laptop's LAN IP
+```
+
+Open `http://192.168.1.20:3000` on the phone (same Wi-Fi). Tap Voice once to
+unlock audio. The map, live train, blockage windows, rerouting and spoken
+alerts work over LAN HTTP. Safari only allows geolocation and the microphone on
+HTTPS, so without a tunnel the start falls back to the simulated Swearingen
+Engineering Center and Say route reports that the microphone is unavailable.
+Everything is a simulation: not for emergency use.
+
 ## Quick start (v1)
 
 ```bash

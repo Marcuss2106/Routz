@@ -126,6 +126,43 @@ def situation_key(crossings: list[CrossingForecastIn]) -> str | None:
     return ",".join(sorted(parts))
 
 
+SPEAK_WITHIN_S = 120
+
+
+def spoken_crossings(event: TrainStateEstimate) -> list[CrossingForecastIn]:
+    """Map user-facing blockage predictions to the existing speech policy.
+
+    The road name stands in for the crossing id so the sentence names the real
+    road. Far-off crossings are not spoken; only closures within about two
+    minutes or already blocked.
+    """
+    crossings: list[CrossingForecastIn] = []
+    for prediction in event.predictions:
+        if prediction.status in {"blocked_now", "stopped_on_crossing"}:
+            crossings.append(
+                CrossingForecastIn(
+                    crossing_id=prediction.roadName,
+                    eta_seconds=0.0,
+                    estimated_blockage_seconds=max(0.0, float(prediction.clearSeconds)),
+                    status="blocking",
+                )
+            )
+        elif prediction.status in {"blocked_soon", "upcoming"} and (
+            0 < prediction.etaSeconds <= SPEAK_WITHIN_S
+        ):
+            crossings.append(
+                CrossingForecastIn(
+                    crossing_id=prediction.roadName,
+                    eta_seconds=float(prediction.etaSeconds),
+                    estimated_blockage_seconds=max(
+                        0.0, float(prediction.clearSeconds - prediction.etaSeconds)
+                    ),
+                    status="approaching",
+                )
+            )
+    return crossings
+
+
 class AlertBook:
     def __init__(self) -> None:
         self.alerts: dict[str, SpokenAlert] = {}
@@ -151,7 +188,20 @@ class AlertBook:
         self.latest_estimates[event.simulation_id] = event
 
     def ingest_estimate(self, event: TrainStateEstimate) -> SpokenAlert | None:
-        """Feed canonical acoustic crossings through the existing speech policy."""
+        """Speak real map crossings, not the acoustic rail's internal crossing ids.
+
+        A tracking dropout (no usable estimate) says nothing about the train, so
+        it must not announce a clearance. Only a cleared train does.
+        """
+        crossings = spoken_crossings(event)
+        if not crossings and event.status != "cleared":
+            last = self._last_sequence.get(event.simulation_id)
+            if last is not None and event.sequence <= last:
+                raise StalePrediction(
+                    f"sequence {event.sequence} is stale for {event.simulation_id}"
+                )
+            self._last_sequence[event.simulation_id] = event.sequence
+            return None
         legacy = PredictionIn(
             simulation_id=event.simulation_id,
             sequence=event.sequence,
@@ -164,15 +214,7 @@ class AlertBook:
                 if event.direction_deg_from_east is not None
                 else "unknown"
             ),
-            crossings=[
-                CrossingForecastIn(
-                    crossing_id=crossing.crossing_id,
-                    eta_seconds=crossing.eta_seconds,
-                    estimated_blockage_seconds=crossing.estimated_blockage_seconds,
-                    status=crossing.status,
-                )
-                for crossing in event.crossings
-            ],
+            crossings=crossings,
             source=event.source,
         )
         return self.ingest(legacy)

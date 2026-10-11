@@ -81,6 +81,17 @@ background write to the `train_state_estimates` table, compatible with Tiger
 Data/TimescaleDB. Without it, persistence is disabled and the live path stays
 in memory.
 
+### Demo anchor
+
+`backend/src/backend/demo_anchor.py` maps the acoustic rail (the toy polyline
+in `shared/simulation_geometry.json`) onto an 800 m stretch of the real
+Greene St to Laurel St Norfolk Southern corridor so predictions reach real FRA
+crossings. `POST /api/predictions` enriches each estimate with `map_state` and
+per-crossing `predictions`; while length is still provisional the windows carry
+`lengthProvisional: true` (a lower bound on clearance). This is a simulation
+device, not a localization result, and a tracking dropout never announces a
+clearance.
+
 ### Tests
 
 ```bash

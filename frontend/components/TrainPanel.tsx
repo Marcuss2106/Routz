@@ -244,12 +244,11 @@ export default function TrainPanel({ observation, estimate = null, predictions, 
                   <span>Status: <strong>{estimate.status.replaceAll("_", " ")}</strong></span>
                   <span>Position confidence: <strong>{Math.round(estimate.confidence.position * 100)}%</strong></span>
                   <span>Position uncertainty: <strong>±{Math.round(estimate.uncertainty.position_m ?? 0)} m</strong></span>
-                  <span>Direction: <strong>{estimate.direction_deg_from_east === null ? "—" : `${estimate.direction_deg_from_east.toFixed(0)}°`}</strong></span>
+                  <span>Direction: <strong>{estimate.map_state?.direction_deg_from_east == null ? "—" : `${estimate.map_state.direction_deg_from_east.toFixed(0)}° from east`}</strong></span>
                   <span className="col-span-2">
-                    Length: <strong>{estimate.length_m === null ? `${Math.round(estimate.provisional_length_m ?? 0)} m provisional` : `${Math.round(estimate.length_m)} m stable`}</strong>
-                    {estimate.uncertainty.length_m !== null ? ` ±${Math.round(estimate.uncertainty.length_m)} m` : ""}
+                    Length: <strong>{estimate.map_state?.length_m != null ? `${Math.round(estimate.map_state.length_m)} m stable` : estimate.map_state?.provisional_length_m != null ? `${Math.round(estimate.map_state.provisional_length_m)} m provisional (clearing times are lower bounds)` : "pending"}</strong>
                   </span>
-                  <span className="col-span-2 text-[#4C1D95]/70">Source: acoustic array · {estimate.label.replaceAll("_", " ")}</span>
+                  <span className="col-span-2 text-[#4C1D95]/70">Source: acoustic array · {estimate.label.replaceAll("_", " ")} · placed on a demo corridor, not a real train</span>
                 </div>
               )}
               {staleLabel && (
@@ -288,10 +287,10 @@ export default function TrainPanel({ observation, estimate = null, predictions, 
                           {p.roadName}
                           <span className="ml-1.5 font-normal text-[#0B1B33]/50">
                             {p.status === "blocked_now" || p.status === "stopped_on_crossing"
-                              ? `blocked · clears ${formatClock(p.blockEndUtc)}`
+                              ? `blocked · clears ${p.lengthProvisional ? "no earlier than " : ""}${formatClock(p.blockEndUtc)}`
                               : p.status === "cleared"
                                 ? "cleared"
-                                : `blocked ${formatEta(p.etaSeconds)} · ${formatClock(p.blockStartUtc)}–${formatClock(p.blockEndUtc)}`}
+                                : `blocked ${formatEta(p.etaSeconds)} · ${formatClock(p.blockStartUtc)}–${p.lengthProvisional ? "≥" : ""}${formatClock(p.blockEndUtc)}`}
                           </span>
                         </span>
                       </span>

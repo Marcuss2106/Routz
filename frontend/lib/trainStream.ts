@@ -28,6 +28,19 @@ export interface EstimateUncertainty {
 
 export type EstimateStatus = "detected" | "tracking" | "length_pending" | "cleared" | "unknown";
 
+/** The acoustic estimate re-expressed on the demo map corridor (simulated). */
+export interface MapState {
+  anchor: string;
+  label: "simulated_demo_anchor";
+  position_reference: "front" | "center" | "rear";
+  latitude: number;
+  longitude: number;
+  speed_mps: number | null;
+  direction_deg_from_east: number | null;
+  length_m: number | null;
+  provisional_length_m: number | null;
+}
+
 export interface TrainStateEstimateEvent {
   type: "train_state_estimate";
   simulation_id: string;
@@ -53,6 +66,7 @@ export interface TrainStateEstimateEvent {
     estimated_blockage_seconds: number | null;
     status: "approaching" | "blocking" | "clear" | "unknown";
   }>;
+  map_state: MapState | null;
   predictions: BlockagePrediction[];
 }
 
@@ -106,6 +120,7 @@ function parsePredictions(raw: unknown, fallbackTrainId: string, fallbackObserve
       status: String(o.status ?? "unknown") as BlockagePrediction["status"],
       trainId: String(o.trainId ?? fallbackTrainId),
       observedAt: String(o.observedAt ?? fallbackObservedAt),
+      lengthProvisional: Boolean(o.lengthProvisional),
     };
   });
 }
@@ -125,6 +140,27 @@ export function parseEnvelope(raw: unknown): PredictionEnvelope {
 
 function numberOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
+}
+
+function parseMapState(raw: unknown): MapState | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const latitude = Number(m.latitude);
+  const longitude = Number(m.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const reference = String(m.position_reference ?? "front");
+  return {
+    anchor: String(m.anchor ?? ""),
+    label: "simulated_demo_anchor",
+    position_reference:
+      reference === "center" || reference === "rear" ? reference : "front",
+    latitude,
+    longitude,
+    speed_mps: numberOrNull(m.speed_mps),
+    direction_deg_from_east: numberOrNull(m.direction_deg_from_east),
+    length_m: numberOrNull(m.length_m),
+    provisional_length_m: numberOrNull(m.provisional_length_m),
+  };
 }
 
 /** Validate the one canonical event used by the acoustic map. */
@@ -169,30 +205,39 @@ export function parseTrainStateEstimate(raw: unknown): TrainStateEstimateEvent {
     label: "simulated_acoustic_estimate",
     track_position_m: numberOrNull(e.track_position_m),
     crossings: Array.isArray(e.crossings) ? (e.crossings as TrainStateEstimateEvent["crossings"]) : [],
+    map_state: parseMapState(e.map_state),
     predictions: parsePredictions(e.predictions, trainId, observedAt),
   };
 }
 
-/** Convert a rich estimate into the old map/panel observation shape. */
+/**
+ * Convert a rich estimate into the map/panel observation shape.
+ *
+ * The raw acoustic latitude/longitude live on the acoustic demo rail, which is
+ * not on the real map. The user backend publishes `map_state` after applying
+ * its documented demo anchor, so that is what the map draws. While the length
+ * is unknown the marker uses a 1 m placeholder; no prediction depends on it,
+ * because predictions come from the user backend.
+ */
 export function estimateToObservation(event: TrainStateEstimateEvent): TrainObservation | null {
+  const map = event.map_state;
   if (
-    event.latitude === null ||
-    event.longitude === null ||
-    event.speed_mps === null ||
-    event.direction_deg_from_east === null
+    !map ||
+    map.speed_mps === null ||
+    map.direction_deg_from_east === null
   ) {
     return null;
   }
-  const length = event.length_m ?? event.provisional_length_m ?? 1;
+  const length = map.length_m ?? map.provisional_length_m ?? 1;
   return parseTrainObservation({
     trainId: event.train_id,
     observedAt: new Date().toISOString(),
-    lat: event.latitude,
-    lon: event.longitude,
-    speedMps: event.speed_mps,
+    lat: map.latitude,
+    lon: map.longitude,
+    speedMps: map.speed_mps,
     lengthM: Math.max(1, length),
-    degFromEast: event.direction_deg_from_east,
-    positionReference: "center",
+    degFromEast: map.direction_deg_from_east,
+    positionReference: map.position_reference,
   });
 }
 

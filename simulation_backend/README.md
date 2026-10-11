@@ -17,6 +17,26 @@ Length stays provisional while the train occupies the acoustic field and becomes
 stable only after the rear clears. The maximum inferred occupancy is 2,000 m,
 which is a safety bound rather than a configured train truth.
 
+The POST to the user backend also carries `track_position_m`, the acoustic
+estimate of distance along the shared rail polyline. The user backend maps it
+onto a real Columbia corridor with `backend/src/backend/demo_anchor.py` (a
+fixed demo transform), so the train reaches real crossings.
+
+### Simulated trials
+
+`scripts/e2e_trials.py` feeds a hidden, continuously moving synthetic point
+source through `SimulationPipeline` and scores position, speed, direction, and
+the ETA to the first real crossing. Representative results (simulation only, 2
+seeds): at 20 dB SNR, 5-8 m median position error when tracking (fix rate
+10-46%), direction always correct, median ETA error 3.5-8 s; at 10 dB almost
+no fixes and none at 5 dB or lower. Speed is the weakest estimate (median
+error about 25-35%), and the tracker loses the train inside the microphone
+cluster. These do not measure real-world accuracy.
+
+```bash
+simulation_backend/.venv/bin/python scripts/e2e_trials.py --seeds 2
+```
+
 Run the inference tests with:
 
 ```bash
