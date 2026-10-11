@@ -22,3 +22,15 @@ Run the inference tests with:
 ```bash
 .venv/bin/python -m pytest -q
 ```
+
+## Validation report
+
+From the repository root, generate a reproducible report for the five-value
+acoustic state contract:
+
+    PYTHONPATH=simulation_backend python3 scripts/acoustic_validation.py
+
+The report is written to artifacts/acoustic-validation/. It evaluates the
+same localization, Kalman tracking, coordinate conversion, direction, and
+train-lifecycle code used by the live path. Its captures are synthetic and it
+must not be described as field accuracy evidence.

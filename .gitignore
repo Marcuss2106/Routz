@@ -2,3 +2,4 @@
 # the shared geometry from the parent directory.
 /.next/
 /.venv/
+/artifacts/acoustic-validation/
