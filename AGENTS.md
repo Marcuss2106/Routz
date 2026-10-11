@@ -267,7 +267,7 @@ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=replace-with-browser-restricted-key
 `backend/.env.example` (railroad motion and the user voice API):
 
 ```dotenv
-SIMULATION_ALLOWED_ORIGINS=http://localhost:3000
+SIMULATION_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100
 USER_BACKEND_PORT=8002
 USER_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
 INTERNAL_API_TOKEN=replace-with-shared-private-token
@@ -275,7 +275,7 @@ ELEVENLABS_API_KEY=replace-with-private-key-if-generated-server-side
 ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
-- Current local ports are simulation frontend `3000`, rail-motion `backend.main` `8000`, audio inference `8001`, and the user voice API `backend.user_api` `8002`. The map plays audio from port `8002`. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the voice API.
+- Current local ports are the map frontend `3000`, the 3D simulation frontend `3100` when `3000` is already taken, rail-motion `backend.main` `8000`, audio inference `8001`, and the user voice API `backend.user_api` `8002`. The map plays audio from port `8002`. Railroad CORS allows localhost and 127.0.0.1 on ports 3000 and 3100. `USER_ALLOWED_ORIGINS` includes localhost and 127.0.0.1 on ports 3000 and 3001 so either Next dev URL can call the voice API.
 - Next.js exposes **all `NEXT_PUBLIC_*` variables to the browser**. Only use that prefix for intentionally public configuration. Google Maps browser keys are not secrets: restrict them by HTTP referrer and API; keep Google Routes server keys private and restrict them separately.
 - ElevenLabs is called from `backend/user_api.py` on port 8002. The key stays in `ELEVENLABS_API_KEY`. The map only requests `GET /api/speech/{alert_id}` and plays the audio. `ELEVENLABS_VOICE_ID` defaults to the public Rachel voice when unset. PostgreSQL and the Google server key are not read by this speech service yet.
 - The same `INTERNAL_API_TOKEN` value must be configured in both Python simulation backend and user backend. Authenticate prediction ingestion (e.g., `Authorization: Bearer <token>`) and use TLS/HTTPS in deployment. Do not put this token in either frontend.
