@@ -23,6 +23,7 @@ import {
 import { readCurrentLocation } from "@/lib/here";
 import { SIMULATED_CROSSINGS, type Crossing } from "@/lib/crossings";
 import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/lib/routeCrossing";
+import { getCrossingAwareCandidates } from "@/lib/routeDetour";
 import {
   decideReroute,
   routeBlockSignature,
@@ -57,37 +58,6 @@ function simulatedHere(): PlaceResult {
     formattedAddress: "Simulated start, 301 Main St, Columbia, SC",
     coordinate: { latitude: 33.98924, longitude: -81.02982 },
   };
-}
-
-/**
- * Ask Google for ordinary alternatives first. If every option still meets an
- * active train conflict, force one additional candidate through the nearest
- * crossing that the rear of the train has already cleared.
- */
-async function getCrossingAwareCandidates(
-  origin: PlaceResult,
-  destination: PlaceResult,
-  predictions: BlockagePrediction[]
-): Promise<RouteInfo[]> {
-  const direct = await getDrivingRoutes(origin, destination, true);
-  if (predictions.length === 0 || !scoreRouteCandidates(direct, predictions)[0]?.blocked) {
-    return direct;
-  }
-
-  const cleared = predictions
-    .filter((prediction) => prediction.status === "cleared")
-    .sort((a, b) => b.distanceM - a.distanceM)[0];
-  if (!cleared) return direct;
-
-  try {
-    const viaClearedCrossing = await getDrivingRoutes(origin, destination, false, [{
-      latitude: cleared.latitude,
-      longitude: cleared.longitude,
-    }]);
-    return [...direct, ...viaClearedCrossing];
-  } catch {
-    return direct;
-  }
 }
 
 export default function Home() {
@@ -252,7 +222,7 @@ function MapScreen() {
       setConflicts([]);
       setWasRerouted(false);
       try {
-        const results = await getCrossingAwareCandidates(from, to, predictions);
+        const results = await getCrossingAwareCandidates(from, to, predictions, Date.now());
         if (activeRouteRequestRef.current !== requestId) return;
         const scored =
           predictions.length > 0 ? scoreRouteCandidates(results, predictions) : null;
@@ -267,11 +237,7 @@ function MapScreen() {
         setDestination(snappedTo);
         setCandidates(results);
         setRoute(chosen);
-        routeRefreshRef.current.fetchedSignature = routeBlockSignature(
-          chosen,
-          predictions,
-          Date.now()
-        );
+        routeRefreshRef.current.fetchedSignature = "";
         if (best) {
           setConflicts(best.conflicts);
           const fastest = [...results].sort(
@@ -381,6 +347,7 @@ function MapScreen() {
         setConflicts(decision.conflicts);
         setWasRerouted(decision.wasRerouted);
       }
+      refresh.fetchedSignature = "";
       return;
     }
 
@@ -390,7 +357,7 @@ function MapScreen() {
     refresh.fetchedSignature = signature;
     const requestedSentAt = snapshot.sentAtMs;
     let applied = false;
-    void getCrossingAwareCandidates(origin, destination, snapshot.predictions)
+    void getCrossingAwareCandidates(origin, destination, snapshot.predictions, nowMs)
       .then((results) => {
         if (routeRefreshRef.current.requestId !== requestId) return;
         const latest = latestSnapshotRef.current;
@@ -399,16 +366,19 @@ function MapScreen() {
         const now = Date.now();
         if (routeBlockSignature(currentRoute, latest.predictions, now) === "clear") return;
         const scored = scoreRouteCandidates(results, latest.predictions, now);
-        const best = scored.find((candidate) => !candidate.blocked) ?? scored[0];
-        if (!best) return;
-        const fastest = [...results].sort(
-          (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
-        )[0];
+        const best = scored.find((candidate) => !candidate.blocked);
+        if (!best) {
+          // All fetched candidates are blocked; do NOT switch to a route that runs into the train.
+          setCandidates(results);
+          routeRefreshRef.current.fetchedSignature = "";
+          return;
+        }
         applied = true;
         setCandidates(results);
         setRoute(best.route);
         setConflicts(best.conflicts);
-        setWasRerouted(best.route !== fastest);
+        setWasRerouted(true);
+        routeRefreshRef.current.fetchedSignature = "";
       })
       .catch(() => {
         if (routeRefreshRef.current.requestId === requestId) {
@@ -428,7 +398,15 @@ function MapScreen() {
         routeRefreshRef.current.fetchedSignature = "";
       }
     };
-  }, [destination, origin, rerouteSignal, routeActive, routeLoading]);
+  }, [
+    destination,
+    origin,
+    rerouteSignal,
+    routeActive,
+    routeLoading,
+    trainSnapshot?.sequence,
+    trainSnapshot?.sentAtMs,
+  ]);
 
   const liveStatus = useTrainStream(
     useCallback(
