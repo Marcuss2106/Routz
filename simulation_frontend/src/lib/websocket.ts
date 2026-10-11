@@ -1,11 +1,32 @@
 import type { RailroadPayload, SimulationCommand, TrainState } from "@/types/simulation";
 
-const apiUrl = process.env.NEXT_PUBLIC_SIMULATION_API_URL ?? "http://localhost:8000";
-const wsUrl = process.env.NEXT_PUBLIC_SIMULATION_WS_URL ?? "ws://localhost:8000/ws/simulation";
+export function getSimulationApiUrl(): string {
+  return process.env.NEXT_PUBLIC_SIMULATION_API_URL ?? "http://localhost:8000";
+}
+
+export function getSimulationWsUrl(): string {
+  return process.env.NEXT_PUBLIC_SIMULATION_WS_URL ?? "ws://localhost:8000/ws/simulation";
+}
+
+/** Detect the classic production pitfall: an https:// page with http/ws backend URLs. */
+export function getMixedContentHint(): string | null {
+  if (typeof window === "undefined" || window.location.protocol !== "https:") return null;
+  const insecure = [getSimulationApiUrl(), getSimulationWsUrl()].some((url) =>
+    /^(http|ws):\/\//i.test(url.trim()),
+  );
+  if (!insecure) return null;
+  return "This page is on HTTPS but the backend URL is http/ws, which browsers block. Use the https/wss DuckDNS URLs and redeploy.";
+}
 
 export async function loadRailroad(signal?: AbortSignal): Promise<RailroadPayload> {
-  const response = await fetch(`${apiUrl}/api/railroad`, { signal, cache: "no-store" });
-  if (!response.ok) throw new Error(`Rail data request failed (${response.status})`);
+  const apiUrl = getSimulationApiUrl();
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}/api/railroad`, { signal, cache: "no-store" });
+  } catch {
+    throw new Error(`Cannot reach the rail backend at ${apiUrl} (is it running, and is this origin allowed?).`);
+  }
+  if (!response.ok) throw new Error(`Rail data request to ${apiUrl} failed (${response.status})`);
   return response.json() as Promise<RailroadPayload>;
 }
 
@@ -25,6 +46,7 @@ export class SimulationSocket {
 
   connect() {
     this.stopped = false;
+    const wsUrl = getSimulationWsUrl();
     this.socket = new WebSocket(wsUrl);
     this.socket.onopen = () => {
       this.attempt = 0;
@@ -35,7 +57,7 @@ export class SimulationSocket {
       if (message.type === "train_state") this.callbacks.onState(message as TrainState);
       if (message.type === "command_error") this.callbacks.onError(message.message ?? "Command rejected");
     };
-    this.socket.onerror = () => this.callbacks.onError("Live train connection was interrupted.");
+    this.socket.onerror = () => this.callbacks.onError(`Live train connection to ${getSimulationWsUrl()} was interrupted.`);
     this.socket.onclose = () => {
       if (this.stopped) return;
       this.callbacks.onConnection("reconnecting");

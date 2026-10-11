@@ -5,8 +5,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { AudioLines, LoaderCircle } from "lucide-react";
 import { SimulationControls } from "@/components/controls/SimulationControls";
 import { JunctionPrediction } from "@/components/JunctionPrediction";
-import { loadRailroad, SimulationSocket } from "@/lib/websocket";
-import { AudioSimulationSocket, buildAudioChunk } from "@/lib/audioWebsocket";
+import { loadRailroad, SimulationSocket, getMixedContentHint, getSimulationApiUrl, getSimulationWsUrl } from "@/lib/websocket";
+import { AudioSimulationSocket, buildAudioChunk, getAudioWsUrl } from "@/lib/audioWebsocket";
 import { useTrainAudioSource } from "@/lib/audioSource";
 import { acousticSToRouteDistance, getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
 import { buildTrafficCars } from "@/lib/traffic";
@@ -160,7 +160,7 @@ export default function SimulationApp() {
         />}
       </aside>
       {!railroad && !error && <div className="scene-message"><LoaderCircle className="spin" /> Loading SCDOT rail geometry…</div>}
-      {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span></div>}
+      {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span><span style={{ fontSize: 12, opacity: 0.85 }}>API {getSimulationApiUrl()} · WS {getSimulationWsUrl()} · Audio {getAudioWsUrl()}</span>{getMixedContentHint() && <span style={{ fontSize: 12 }}>{getMixedContentHint()}</span>}</div>}
       {railroad && <TrainScene trafficCars={trafficCars} />}
       <SimulationControls socketRef={socketRef} />
       <footer className="source-note">SCDOT rail · © OpenStreetMap contributors · Simulation, not for emergency use</footer>

@@ -17,6 +17,10 @@ import type { TrafficCar } from "@/lib/traffic";
 const audioWsUrl = process.env.NEXT_PUBLIC_AUDIO_WS_URL ?? "ws://localhost:8001/ws/simulation";
 export const AUDIO_SIMULATION_ID = "routz-columbia-audio-001";
 
+export function getAudioWsUrl(): string {
+  return audioWsUrl;
+}
+
 function encodePcm16Base64(samples: Float32Array) {
   const bytes = new Uint8Array(samples.length * 2);
   const view = new DataView(bytes.buffer);

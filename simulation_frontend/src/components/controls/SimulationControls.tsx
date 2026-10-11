@@ -5,6 +5,7 @@ import { type MutableRefObject, useEffect, useMemo, useRef, useState } from "rea
 import { createPleasantVoice, type PleasantVoice } from "@/lib/pleasantVoice";
 import { formatDistance } from "@/lib/simulation";
 import type { SimulationSocket } from "@/lib/websocket";
+import { getMixedContentHint, getSimulationWsUrl } from "@/lib/websocket";
 import { useSimulationStore } from "@/stores/simulationStore";
 
 export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<SimulationSocket | null> }) {
@@ -128,8 +129,11 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
           ? `Visible train: acoustic estimate · ${audioPrediction.status.replaceAll("_", " ")}`
           : current
             ? `Visible train: live simulation fallback · ${audioPrediction?.type === "ingest_error" ? "acoustic ingest error" : "acoustic warming up"}`
-            : "Visible train: waiting for simulation state"}
+            : `Visible train: waiting for simulation state (${connection} · ${getSimulationWsUrl()})`}
       </div>
+      {!current && getMixedContentHint() && (
+        <div className="estimate-note" style={{ fontSize: 12 }}>{getMixedContentHint()}</div>
+      )}
       <div className="control-settings">
         <label className="volume-control">
           {volume > 0 ? <Volume2 size={15} /> : <VolumeX size={15} />}
