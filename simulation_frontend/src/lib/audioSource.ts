@@ -25,7 +25,7 @@ export function useTrainAudioSource() {
     }
     const audioContext = new window.AudioContext();
 
-    fetch("/api/train-audio")
+    fetch("/train.wav")
       .then((response) => {
         if (!response.ok) throw new Error("train audio unavailable");
         return response.arrayBuffer();

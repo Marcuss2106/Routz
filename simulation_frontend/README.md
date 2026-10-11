@@ -10,8 +10,9 @@ is north, and `s` is distance along the rail. The backend uses the same file,
 so the frontend and estimator cannot silently drift to different microphone
 locations or track lengths.
 
-The browser loads `train.wav` through `/api/train-audio` when the repository
-asset is available. Each microphone then receives a separate PCM stream from a
+The browser loads `public/train.wav` (a 16 kHz mono copy of the repository-root
+`train.wav`, small enough to serve statically from Vercel) from `/train.wav`
+when the asset is available. Each microphone then receives a separate PCM stream from a
 moving extended-source model with per-segment propagation delay, distance
 attenuation, rear cutoff, and configurable noise. If no
 audio asset is available, the same pipeline uses a deterministic synthetic

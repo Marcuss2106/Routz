@@ -32,7 +32,7 @@ routez/
 - Render railroad track, the cached road layer, verified ground-level crossings, moving train, the three-channel acoustic array, additional geographic microphone markers, and optional sound-wave visualization. Railroad and road layers retain detailed geometry nearby and crossfade to continuous screen-space-width lines at distant zoom levels.
 - Render the USC College of Engineering and Computing landmark and place the live train route/audio trackers from their configured WGS84 coordinates using the shared coordinate conversion.
 - Provide play/pause/reset, speed, direction, noise level, and train-length controls.
-- Use one prerecorded `train.wav` as the common source for three **distinct** virtual microphone streams; model per-microphone sound propagation delay, attenuation, and added noise.
+- Use one prerecorded `train.wav` as the common source for three **distinct** virtual microphone streams; model per-microphone sound propagation delay, attenuation, and added noise. The browser fetches the static `simulation_frontend/public/train.wav` (16 kHz mono downsample of the repo-root `train.wav`) from `/train.wav`, so it works on Vercel; the root file remains the source for tests and scripts.
 - Read `shared/simulation_geometry.json` for the track polyline and microphone coordinates.
 - Send timestamped, synchronized audio chunks and microphone coordinates to the simulation backend. Do not send ground-truth position/speed/length/direction or a source-file hint to inference endpoints.
 - May show ground-truth position in a separate debug/evaluation channel, visibly labeled.

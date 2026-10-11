@@ -33,7 +33,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
   }, []);
 
   useEffect(() => {
-    const trainAudio = new Audio("/api/train-audio");
+    const trainAudio = new Audio("/train.wav");
     trainAudio.loop = true;
     trainAudio.preload = "auto";
     trainAudio.volume = .35;
