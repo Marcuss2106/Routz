@@ -124,9 +124,11 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
         <button className="text-button" onClick={() => useSimulationStore.getState().resetCamera()}>Overview</button>
       </div>
       <div className="estimate-note">
-        {audioPrediction?.type === "train_state_estimate"
+        {audioPrediction?.type === "train_state_estimate" && audioPrediction.status !== "unknown" && audioPrediction.track_position_m != null
           ? `Visible train: acoustic estimate · ${audioPrediction.status.replaceAll("_", " ")}`
-          : "Visible train: waiting for acoustic estimate"}
+          : current
+            ? `Visible train: live simulation fallback · ${audioPrediction?.type === "ingest_error" ? "acoustic ingest error" : "acoustic warming up"}`
+            : "Visible train: waiting for simulation state"}
       </div>
       <div className="control-settings">
         <label className="volume-control">

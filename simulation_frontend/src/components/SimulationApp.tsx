@@ -4,10 +4,11 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef } from "react";
 import { AudioLines, LoaderCircle } from "lucide-react";
 import { SimulationControls } from "@/components/controls/SimulationControls";
+import { JunctionPrediction } from "@/components/JunctionPrediction";
 import { loadRailroad, SimulationSocket } from "@/lib/websocket";
 import { AudioSimulationSocket, buildAudioChunk } from "@/lib/audioWebsocket";
 import { useTrainAudioSource } from "@/lib/audioSource";
-import { getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
+import { acousticSToRouteDistance, getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
 import { buildTrafficCars } from "@/lib/traffic";
 import { useSimulationStore } from "@/stores/simulationStore";
 
@@ -36,11 +37,23 @@ export default function SimulationApp() {
     () => railroad ? buildTrafficCars(railroad.roads ?? [], railroad.route.points) : [],
     [railroad],
   );
-  const estimateErrorM = useMemo(() => {
-    if (!current || !railroad || audioPrediction?.type !== "train_state_estimate" || audioPrediction.track_position_m == null) return null;
-    const truthS = mapRouteDistanceToAcousticS(current.distance_along_route_m, railroad.route.length_m);
-    return Math.abs(truthS - audioPrediction.track_position_m);
-  }, [audioPrediction, current, railroad]);
+  const acousticEstimate = audioPrediction?.type === "train_state_estimate" ? audioPrediction : null;
+  const fallbackPositionM = current && railroad
+    ? mapRouteDistanceToAcousticS(current.distance_along_route_m, railroad.route.length_m)
+    : null;
+  const fallbackDirectionDeg = current
+    ? ((90 - current.heading_deg) % 360 + 360) % 360
+    : null;
+  const displayedPositionM = acousticEstimate?.track_position_m ?? fallbackPositionM;
+  const displayedSpeedMps = acousticEstimate?.speed_mps ?? current?.speed_mps ?? null;
+  const displayedDirectionDeg = acousticEstimate?.direction_deg_from_east ?? fallbackDirectionDeg;
+  const positionIsFallback = acousticEstimate?.track_position_m == null && fallbackPositionM != null;
+  const motionIsFallback = (
+    acousticEstimate?.speed_mps == null || acousticEstimate?.direction_deg_from_east == null
+  ) && current != null;
+  const displayedRouteDistanceM = railroad && acousticEstimate?.track_position_m != null
+    ? acousticSToRouteDistance(acousticEstimate.track_position_m, railroad.route.length_m)
+    : current?.distance_along_route_m ?? 0;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -125,18 +138,26 @@ export default function SimulationApp() {
       <header className="brand"><div className="brand-mark" aria-hidden="true"><span /><span /></div><div><p>Columbia rail study</p><h1>Routz</h1></div></header>
       <aside className="location-card"><span className="eyebrow">South Carolina · 10 mile radius</span><strong>Downtown Columbia</strong><span>34.0007° N · 81.0348° W</span></aside>
       <aside className="sensor-card">
-        <div className="sensor-card-heading"><AudioLines size={15} /><span>Acoustic array</span><em className={audioConnection}>{audioConnection === "connected" ? (audioPrediction?.type === "train_state_estimate" ? audioPrediction.status : audioPrediction?.type === "ingest_error" ? "ingest error" : "warming up") : audioConnection}</em></div>
+        <div className="sensor-card-heading"><AudioLines size={15} /><span>Acoustic array</span><em className={audioConnection}>{audioConnection === "connected" ? (audioPrediction?.type === "train_state_estimate" ? (audioPrediction.status === "unknown" ? "warming up" : audioPrediction.status.replaceAll("_", " ")) : audioPrediction?.type === "ingest_error" ? "ingest error" : "warming up") : audioConnection}</em></div>
         {sensors.map((sensor) => {
           const reading = sensorReadings.find((item) => item.sensorId === sensor.id);
           return <div className="sensor-row" key={sensor.id}><i style={{ background: sensor.color }} /><span>{sensor.label}</span><strong>{reading ? `${reading.decibels} dB` : "—"}</strong></div>;
         })}
-        {audioPrediction?.type === "train_state_estimate" && <>
-          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Position</span><strong>{audioPrediction.track_position_m == null ? "—" : `${audioPrediction.track_position_m.toFixed(1)} m`}</strong></div>
-          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Speed / direction</span><strong>{audioPrediction.speed_mps == null ? "—" : `${audioPrediction.speed_mps.toFixed(1)} m/s · ${audioPrediction.direction_deg_from_east?.toFixed(0) ?? "—"}°`}</strong></div>
-          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Length</span><strong>{audioPrediction.length_m == null ? `${audioPrediction.provisional_length_m?.toFixed(1) ?? "—"} m provisional` : `${audioPrediction.length_m.toFixed(1)} m stable`}</strong></div>
-          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Confidence / ±position</span><strong>{Math.round(audioPrediction.confidence.position * 100)}% · {audioPrediction.uncertainty.position_m == null ? "—" : `${audioPrediction.uncertainty.position_m.toFixed(1)} m`}</strong></div>
-          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Truth vs estimate</span><strong>{estimateErrorM == null ? "—" : `${estimateErrorM.toFixed(1)} m`}</strong></div>
+        {(audioPrediction?.type === "train_state_estimate" || current) && <>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Position</span><strong>{displayedPositionM == null ? "—" : `${displayedPositionM.toFixed(1)} m${positionIsFallback ? " · simulation" : ""}`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Speed / direction</span><strong>{displayedSpeedMps == null || displayedDirectionDeg == null ? "—" : `${displayedSpeedMps.toFixed(1)} m/s · ${displayedDirectionDeg.toFixed(0)}°${motionIsFallback ? " · simulation" : ""}`}</strong></div>
+          {audioPrediction?.type === "train_state_estimate" && <>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Length</span><strong>{audioPrediction.length_m == null ? `${audioPrediction.provisional_length_m?.toFixed(1) ?? "—"} m provisional` : `${audioPrediction.length_m.toFixed(1)} m stable`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Confidence / ±position</span><strong>{Math.round(audioPrediction.confidence.position * 100)}% · {audioPrediction.uncertainty.position_m == null ? "—" : `${audioPrediction.uncertainty.position_m.toFixed(1)} m`}</strong></div>
+          </>}
         </>}
+        {railroad && current && <JunctionPrediction
+          railroad={railroad}
+          routeDistanceM={displayedRouteDistanceM}
+          positionConfidence={acousticEstimate?.confidence.position ?? 0}
+          directionConfidence={acousticEstimate?.confidence.direction ?? 0}
+          usingSimulationFallback={positionIsFallback || motionIsFallback}
+        />}
       </aside>
       {!railroad && !error && <div className="scene-message"><LoaderCircle className="spin" /> Loading SCDOT rail geometry…</div>}
       {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span></div>}

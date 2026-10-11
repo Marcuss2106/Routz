@@ -45,7 +45,7 @@ function Vehicle({ index, route, routeLengthM, mode }: { index: number; route: S
   const scale = VISUAL_EXAGGERATION.trainScale;
   return (
     <group ref={ref} scale={scale}>
-      {mode === "estimate" && <mesh position={[0, 10.5, 0]} rotation-x={Math.PI / 2}><torusGeometry args={[2.3, .28, 8, 24]} /><meshBasicMaterial color="#7c3aed" /></mesh>}
+      {mode === "estimate" && <mesh position={[0, 10.5, 0]} rotation-x={Math.PI / 2}><torusGeometry args={[2.3, .28, 8, 24]} /><meshBasicMaterial color="#c16857" /></mesh>}
       {!isEngine && <>
         <mesh castShadow position={[0, 3, 0]}><boxGeometry args={[4.5, 3.5, 8.8]} /><meshStandardMaterial color={index % 2 ? "#bc4938" : "#a83b2e"} roughness={0.76} /></mesh>
         <mesh castShadow position={[0, 4.9, 0]}><boxGeometry args={[4.8, .35, 9.1]} /><meshStandardMaterial color="#78342d" roughness={.8} /></mesh>
