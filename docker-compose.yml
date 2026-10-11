@@ -8,7 +8,9 @@ services:
       RAIL_CENTER_LAT: ${RAIL_CENTER_LAT:-34.0007}
       RAIL_CENTER_LON: ${RAIL_CENTER_LON:--81.0348}
       RAIL_RADIUS_M: ${RAIL_RADIUS_M:-16093.44}
-      SIMULATION_ALLOWED_ORIGINS: ${SIMULATION_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3100}
+      # These endpoints are intentionally public and unauthenticated. Origin
+      # allowlists are not authentication and broke Vercel preview deployments.
+      SIMULATION_ALLOWED_ORIGINS: ${DEPLOYED_SIMULATION_ALLOWED_ORIGINS:-*}
     ports:
       - "8000:8000"
     healthcheck:
@@ -45,7 +47,7 @@ services:
     environment:
       USER_BACKEND_PREDICTIONS_URL: http://user-service:8002/api/predictions
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in deploy/.env}
-      SIMULATION_ALLOWED_ORIGINS: ${SIMULATION_ALLOWED_ORIGINS:-http://localhost:3100}
+      SIMULATION_ALLOWED_ORIGINS: ${DEPLOYED_SIMULATION_ALLOWED_ORIGINS:-*}
     depends_on:
       user-service:
         condition: service_healthy
@@ -60,6 +62,10 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    labels:
+      # Bump when proxy behavior changes so `compose up` recreates Caddy and
+      # cannot keep stale, dynamically-loaded response headers.
+      com.routz.proxy-config-version: "2"
     environment:
       RAIL_DOMAIN: ${RAIL_DOMAIN:-routz-rail.duckdns.org}
       USER_DOMAIN: ${USER_DOMAIN:-routz-user.duckdns.org}

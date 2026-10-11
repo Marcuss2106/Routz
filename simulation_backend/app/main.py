@@ -18,6 +18,15 @@ from app.settings import Settings
 logger = logging.getLogger("simulation_backend")
 
 
+def origin_allowed(origin: str | None, allowed_origins: list[str]) -> bool:
+    """Accept an exact browser origin or the explicit public wildcard."""
+    return (
+        origin is None
+        or "*" in allowed_origins
+        or origin in allowed_origins
+    )
+
+
 def create_app() -> FastAPI:
     logging.basicConfig(
         level=logging.INFO,
@@ -57,7 +66,7 @@ def create_app() -> FastAPI:
     @app.websocket("/ws/simulation")
     async def simulation_socket(websocket: WebSocket) -> None:
         origin = websocket.headers.get("origin")
-        if origin is not None and origin not in settings.allowed_origins:
+        if not origin_allowed(origin, settings.allowed_origins):
             await websocket.close(code=1008)
             return
         await websocket.accept()

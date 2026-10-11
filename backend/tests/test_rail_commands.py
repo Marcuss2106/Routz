@@ -27,3 +27,14 @@ def test_command_post_rejects_unknown_commands() -> None:
     client = TestClient(app)
     response = client.post("/api/command", json={"command": "derail"})
     assert response.status_code == 400
+
+
+def test_public_rail_api_does_not_emit_credentialed_cors() -> None:
+    client = TestClient(app)
+    response = client.get(
+        "/api/train",
+        headers={"Origin": "http://localhost:3100"},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3100"
+    assert "access-control-allow-credentials" not in response.headers

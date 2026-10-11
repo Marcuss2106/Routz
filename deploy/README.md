@@ -25,20 +25,24 @@ serve TLS. Do this once:
 # 2. Firewall: allow 80 + 443 (plus 22 for SSH).
 sudo ufw allow 80,443/tcp
 
-# 3. Configure secrets + frontend origins.
+# 3. Configure secrets + the user-map frontend origin.
 cp deploy/.env.example deploy/.env
-# edit deploy/.env: set INTERNAL_API_TOKEN, and append your Vercel origins, e.g.
+# edit deploy/.env: set INTERNAL_API_TOKEN and the user map's Vercel origin:
 # USER_ALLOWED_ORIGINS=http://localhost:3000,https://<your-app>.vercel.app
-# SIMULATION_ALLOWED_ORIGINS=http://localhost:3100,https://<your-sim>.vercel.app
+# Keep DEPLOYED_SIMULATION_ALLOWED_ORIGINS=* for the public rail/acoustic demo.
 # RAIL_DOMAIN / USER_DOMAIN / ACOUSTIC_DOMAIN default to the DuckDNS names above.
 
 # 4. Start everything (Caddy issues Let's Encrypt certs automatically).
-docker compose --env-file deploy/.env up --build -d
+docker compose --env-file deploy/.env up --build --force-recreate -d
 docker compose ps
 curl https://routz-rail.duckdns.org/health
 curl https://routz-user.duckdns.org/health
 curl https://routz-acoustic.duckdns.org/health
 ```
+
+`--force-recreate` is required after proxy changes. It prevents Caddy from
+continuing to serve dynamically-loaded stale CORS headers from its old process.
+Rail/acoustic responses intentionally do not use browser credentials.
 
 The 3D simulation frontend no longer hard-requires the rail WebSocket: it polls
 `GET /api/train` (1 Hz) and drives play/pause/restart/speed through
@@ -62,8 +66,10 @@ If `wss://routz-rail.duckdns.org/ws/simulation` still fails in Firefox:
 - `curl` the three `/health` URLs above. Failure = DNS / firewall / Caddy cert issue.
 - `curl` works but socket fails = ad-blocker or stale Vercel build (check the
   compiled `NEXT_PUBLIC_*` values).
-- Socket connects but REST fails = `deploy/.env` CORS origins missing the
-  Vercel origin; update and `docker compose restart rail-service user-service acoustic-service`.
+- If REST fails only inside a browser, check that the response has exactly one
+  `Access-Control-Allow-Origin: *` header and no
+  `Access-Control-Allow-Credentials` header. Recreate Caddy if stale headers
+  remain.
 
 Keep the internal token private; the raw `8000`/`8001`/`8002` host ports are
 HTTP-only fallbacks for local debugging, never for `https://` pages.

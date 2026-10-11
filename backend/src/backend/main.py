@@ -36,7 +36,10 @@ app = FastAPI(title="Routez Railroad Simulation", version="1.0.0", lifespan=life
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_origins),
-    allow_credentials=True,
+    # This is a public simulation clock; it has no cookies or browser
+    # credentials. Enabling credentials makes a stale proxy CORS rule combine
+    # into the invalid value "true, true", which browsers reject.
+    allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
