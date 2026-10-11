@@ -9,7 +9,7 @@ and Python backend both consume that configuration.
 ## Packages
 
 - `frontend/` — Next.js v1 app: Google map, place search, driving routes. See [frontend/README.md](frontend/README.md) for setup (requires a Google Maps Platform API key).
-- `backend/` — reserved for later versions (no backend in v1).
+- `backend/` — authoritative SCDOT/OSM scene service on port 8000 and the user-facing API on port 8002.
 - `simulation_frontend/` — Three.js train scene and three virtual microphone streams.
 - `simulation_backend/` — FastAPI WebSocket ingest, GCC-PHAT localization, temporal tracking, and acoustic estimates.
 
@@ -18,7 +18,7 @@ and Python backend both consume that configuration.
 ```bash
 cd simulation_backend
 python -m pip install -r requirements.txt
-PYTHONPATH=. uvicorn app.main:app --reload --port 8000
+PYTHONPATH=. uvicorn app.main:app --reload --port 8001
 ```
 
 In another terminal:
@@ -29,9 +29,23 @@ npm install
 npm run dev -- -p 3100
 ```
 
-Open http://localhost:3100, enable **Stream**, and inspect the acoustic estimate
+Open http://localhost:3100 and inspect the acoustic estimate
 panel. The backend receives only microphone audio, timestamps, sequence numbers,
-and microphone geometry. All displayed values are simulated.
+and microphone geometry. All displayed values are simulated. The complete live
+path is:
+
+```text
+microphone audio + microphone geometry
+  -> GCC-PHAT / track-constrained localization / Kalman state
+  -> train_state_estimate
+  -> user backend crossing forecasts + WebSocket fan-out
+  -> Google map and acoustic-driven 3D train
+```
+
+The simulator may use ground truth internally to synthesize extended-source
+audio and to render a debug truth overlay. Ground truth is never placed in the
+audio wire contract or used by the acoustic estimator. The visible 3D train
+follows the acoustic estimate by default; use **Show truth** only to compare it.
 The authoritative rail-motion service in [`backend`](backend/README.md) supplies
 the live railroad scene, while [`simulation_backend`](simulation_backend/README.md)
 supplies the acoustic estimate stream. The `frontend` directory remains the
@@ -40,6 +54,9 @@ separate user-facing routing application from GitHub.
 The railroad backend also includes an offline, seeded Parquet journey generator
 that uses the full connected rail graph without starting the live simulation.
 See [`backend/DATASET_GUIDE.md`](backend/DATASET_GUIDE.md).
+
+For deployment and verification scaffolding, see [`deploy/README.md`](deploy/README.md)
+and run `./scripts/verify.sh` after installing the backend and Node dependencies.
 
 ## Quick start (v1)
 

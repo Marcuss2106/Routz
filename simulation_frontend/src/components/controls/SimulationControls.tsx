@@ -1,6 +1,6 @@
 "use client";
 
-import { Map, Pause, Play, RotateCcw, Scan, TrainFront, Volume2, VolumeX } from "lucide-react";
+import { Eye, EyeOff, Map, Pause, Play, RotateCcw, Scan, TrainFront, Volume2, VolumeX } from "lucide-react";
 import { type MutableRefObject, useEffect, useRef, useState } from "react";
 import { formatDistance } from "@/lib/simulation";
 import type { SimulationSocket } from "@/lib/websocket";
@@ -11,6 +11,8 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
   const railroad = useSimulationStore((state) => state.railroad);
   const connection = useSimulationStore((state) => state.connection);
   const cameraMode = useSimulationStore((state) => state.cameraMode);
+  const showTruth = useSimulationStore((state) => state.showTruth);
+  const audioPrediction = useSimulationStore((state) => state.audioPrediction);
   const [volume, setVolume] = useState(.35);
   const trainAudioRef = useRef<HTMLAudioElement | null>(null);
   const running = current?.status === "running";
@@ -68,7 +70,13 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
         <button className="icon-button" aria-label="Restart simulation" title="Restart" onClick={restartSimulation}><RotateCcw size={18} /></button>
         <button className={`camera-button ${cameraMode === "top" ? "active" : ""}`} aria-label="Top view" onClick={() => useSimulationStore.getState().setCameraMode("top")}><Map size={17} /> Top view</button>
         <button className={`camera-button ${cameraMode === "follow" ? "active" : ""}`} aria-label="Follow train from an isometric view" onClick={() => useSimulationStore.getState().setCameraMode("follow")}><Scan size={18} /> Follow</button>
+        <button className={`camera-button ${showTruth ? "active" : ""}`} aria-label="Toggle simulator truth" onClick={() => useSimulationStore.getState().setShowTruth(!showTruth)}>{showTruth ? <EyeOff size={16} /> : <Eye size={16} />} {showTruth ? "Hide truth" : "Show truth"}</button>
         <button className="text-button" onClick={() => useSimulationStore.getState().resetCamera()}>Overview</button>
+      </div>
+      <div className="estimate-note">
+        {audioPrediction?.type === "train_state_estimate"
+          ? `Visible train: acoustic estimate · ${audioPrediction.status.replaceAll("_", " ")}`
+          : "Visible train: waiting for acoustic estimate"}
       </div>
       <div className="control-settings">
         <label className="volume-control">

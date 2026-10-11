@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PositionReference = Literal["front", "center", "rear"]
 
@@ -90,6 +90,56 @@ class BlockagePrediction(BaseModel):
     ]
     trainId: str
     observedAt: datetime
+
+
+class EstimateConfidence(BaseModel):
+    position: float = Field(ge=0, le=1)
+    speed: float = Field(ge=0, le=1)
+    length: float = Field(ge=0, le=1)
+    direction: float = Field(ge=0, le=1)
+
+
+class EstimateUncertainty(BaseModel):
+    position_m: float | None = Field(default=None, ge=0)
+    speed_mps: float | None = Field(default=None, ge=0)
+    length_m: float | None = Field(default=None, ge=0)
+    direction_deg: float | None = Field(default=None, ge=0)
+
+
+class CrossingEstimate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    crossing_id: str = Field(min_length=1)
+    eta_seconds: float | None = None
+    estimated_blockage_seconds: float | None = None
+    status: Literal["approaching", "blocking", "clear", "unknown"]
+
+
+class TrainStateEstimate(BaseModel):
+    """Canonical acoustic estimate carried from inference to the user map."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["train_state_estimate"] = "train_state_estimate"
+    simulation_id: str = Field(min_length=1)
+    sequence: int = Field(ge=0)
+    simulation_time_s: float = Field(ge=0)
+    train_id: str = Field(min_length=1)
+    track_id: str = Field(min_length=1)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    speed_mps: float | None = Field(default=None, ge=0)
+    length_m: float | None = Field(default=None, ge=0, le=5000)
+    provisional_length_m: float | None = Field(default=None, ge=0, le=5000)
+    direction_deg_from_east: float | None = Field(default=None, ge=0, le=360)
+    status: Literal["detected", "tracking", "length_pending", "cleared", "unknown"]
+    confidence: EstimateConfidence
+    uncertainty: EstimateUncertainty
+    source: Literal["acoustic_array"] = "acoustic_array"
+    label: Literal["simulated_acoustic_estimate"] = "simulated_acoustic_estimate"
+    track_position_m: float | None = None
+    crossings: list[CrossingEstimate] = Field(default_factory=list)
+    predictions: list[BlockagePrediction] = Field(default_factory=list)
 
 
 class PredictionEnvelope(BaseModel):

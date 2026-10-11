@@ -198,6 +198,8 @@ def test_length_is_pending_until_acoustic_occupancy_clears() -> None:
     assert lifecycle.observe(1.0, True, 10.0).length_m is None
     pending = lifecycle.observe(14.0, True, 10.0)
     assert pending.status == "length_pending"
+    assert pending.provisional_length_m == pytest.approx(140.0)
+    assert pending.provisional_length_error_m is not None
     cleared = lifecycle.observe(15.6, False, 10.0)
     assert cleared.status == "cleared"
     assert cleared.length_m == pytest.approx(140.0)

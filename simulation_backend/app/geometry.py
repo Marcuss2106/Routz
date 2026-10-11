@@ -34,7 +34,9 @@ METERS_PER_DEGREE_LATITUDE = 111_320.0
 ACOUSTIC_FIELD_MARGIN_M = 120.0
 CLEAR_TIMEOUT_S = 1.5
 MIN_ESTIMATED_TRAIN_LENGTH_M = 20.0
-MAX_ESTIMATED_TRAIN_LENGTH_M = 500.0
+# Freight consists can be much longer than the original prototype's 500 m cap.
+# Keep this as a safety bound for acoustic occupancy, not a train truth value.
+MAX_ESTIMATED_TRAIN_LENGTH_M = 2_000.0
 
 
 @dataclass(frozen=True)

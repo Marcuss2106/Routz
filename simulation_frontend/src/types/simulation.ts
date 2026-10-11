@@ -160,6 +160,7 @@ export interface TrainStateEstimate {
   longitude: number | null;
   speed_mps: number | null;
   length_m: number | null;
+  provisional_length_m?: number | null;
   direction_deg_from_east: number | null;
   status: EstimateStatus;
   confidence: EstimateConfidence;

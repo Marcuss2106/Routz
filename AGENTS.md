@@ -50,7 +50,7 @@ routez/
 - Track consecutive estimates with `[s, velocity_along_track, acceleration]`; derive nonnegative speed and numeric degrees-from-east direction from the local rail tangent.
 - Infer train length from acoustic occupancy duration. Length remains null/provisional until the train clears the array; never substitute a hard-coded consist length.
 - Publish `train_state_estimate` events with confidence and uncertainty for position, speed, length, and direction.
-- Send compact, timestamped crossing predictions to `user-backend` using HTTP POST for MVP simplicity; do not send raw audio downstream.
+- Publish the complete `train_state_estimate` to `user-backend` using the ordered background HTTP publisher; reset events must also be forwarded so a new run can start at sequence 0. Do not send raw audio downstream.
 - Keep signal processing in memory; avoid saving each sample to PostgreSQL.
 - Train sound is an extended source; a single moving point source is an acknowledged simulation simplification. A prerecorded sound is not evidence of real-world localization accuracy.
 
@@ -77,7 +77,7 @@ simulation-frontend (3D train + 3 virtual microphone audio streams)
   -- timestamped audio chunks + microphone positions -->
 simulation-backend (denoise -> TDOA -> rail-constrained localization
                     -> speed/direction -> crossing ETA + clearance)
-  -- authenticated HTTP POST prediction event -->
+  -- authenticated ordered HTTP POST train_state_estimate -->
 user-backend <--> Vultr PostgreSQL
   | Google Maps Routes API + crossing-aware candidate scoring
   -- WebSocket route/prediction events -->
@@ -164,6 +164,7 @@ train state or source-file hint. The audio inference socket is
   "longitude": -81.0339,
   "speed_mps": 8.4,
   "length_m": null,
+  "provisional_length_m": 142.0,
   "direction_deg_from_east": 0.0,
   "status": "length_pending",
   "confidence": {"position": 0.91, "speed": 0.84, "length": 0.0, "direction": 0.97},
@@ -173,7 +174,7 @@ train state or source-file hint. The audio inference socket is
 }
 ```
 
-These numbers are illustrative, not actual detections. `speed_mps` is nonnegative. Direction is numeric degrees from east: east `0`, north `90`, west `180`, south `270`; a curved rail uses its local tangent. `length_m` remains null until acoustic occupancy clears the array, then becomes a backend-derived estimate. Main statuses are `detected`, `length_pending`, `tracking`, `cleared`, and `unknown`. Crossing forecasts are unknown while length is unavailable. The backend generates a new `train_id` for each cleared run and supports one acoustically dominant train at a time.
+These numbers are illustrative, not actual detections. `speed_mps` is nonnegative. Direction is numeric degrees from east: east `0`, north `90`, west `180`, south `270`; a curved rail uses its local tangent. `provisional_length_m` is an occupancy-based estimate while the train is still in the acoustic field; stable `length_m` remains null until acoustic occupancy clears the array, then becomes a backend-derived estimate. Main statuses are `detected`, `length_pending`, `tracking`, `cleared`, and `unknown`. Crossing forecasts are unknown while length is unavailable. The backend generates a new `train_id` for each cleared run and supports one acoustically dominant train at a time.
 
 If speed or location cannot be inferred, publish `unknown` and null values rather than a guessed value. Every estimate includes confidence and uncertainty for position, speed, length, and direction. The `source` is explicitly `acoustic_array` and the `label` is `simulated_acoustic_estimate`.
 
@@ -201,9 +202,9 @@ The inference team delivers compact train-state observations (wall-clock UTC) in
 - Crossings are **real FRA inventory data** (Form 71, SOUTH CAROLINA / COLUMBIA, public at-grade open, Norfolk Southern, with DOT IDs) curated to two corridors in `frontend/lib/crossings.ts` and mirrored in `backend/src/backend/crossings.py`. Predictions derived from them are still simulated.
 - `degFromEast` convention confirmed (Oct 2026): math CCW from east, 0=E/90=N/180=W/270=S.
 
-**Train-observation stream (documented, not served by the current processes)**
-- Planned FastAPI + SSE contract: `POST /api/train-observations`, `GET /api/predictions`, `GET /api/crossings`, `GET /api/events`. `backend/main.py` is the railroad clock and does not implement these routes. `backend/user_api.py` is the voice API.
-- Frontend links via `NEXT_PUBLIC_ROUTZ_API_URL` (`frontend/lib/trainStream.ts`) and falls back to identical local math when that URL is unset or unreachable.
+**User-facing train-state stream (current integration format, Oct 2026)**
+- `simulation-backend` sends the canonical `train_state_estimate` to authenticated `POST /api/predictions` on `backend/user_api.py`. The user backend validates sequence order, enriches crossing forecasts from the shared crossing inventory, optionally queues the estimate for Tiger Data/TimescaleDB, and broadcasts the same canonical event over `GET /ws/updates`.
+- `POST /api/train-observations` remains a compatibility endpoint for the older compact observation shape. The live frontend uses `NEXT_PUBLIC_ROUTZ_API_URL` / `NEXT_PUBLIC_ROUTZ_WS_URL` (with user-backend aliases) and consumes the canonical WebSocket event; local fallback math is only a disconnected demo fallback.
 
 **User backend -> user frontend (WebSocket)**
 - Forward current predictions and selected route/alerts, with `simulation_id`, `sequence`, and timestamp.
@@ -213,7 +214,10 @@ The inference team delivers compact train-state observations (wall-clock UTC) in
 
 **Only `user-backend` accesses the database.** PostgreSQL is for persistence and queries, **not** a real-time message bus or raw audio store.
 
-Start with three tables:
+The current optional estimate-history table is:
+- `train_state_estimates`: one canonical acoustic estimate per `simulation_id` + `sequence`, including confidence, uncertainty, stable/provisional length, and crossing forecasts.
+
+The existing domain tables are:
 - `crossings`: `id`, `name`, `latitude`, `longitude`, optional `rail_position_m` and geometry metadata.
 - `train_observations`: `id`, `simulation_id`, `train_id`, `simulation_time_s`, estimated position, estimated speed, and ingestion timestamp.
 - `crossing_predictions`: `id`, `simulation_id`, `train_id`, `crossing_id`, `simulation_time_s`, predicted arrival/clearance **in simulation seconds**, ingestion timestamp.

@@ -8,7 +8,14 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn app.main:app --reload --port 8001
 ```
-The simulation frontend sends three synchronized 250 ms PCM16 streams to `ws://localhost:8001/ws/simulation`. Sensor coordinates use a route-local frame: `x_m` is distance along the selected demonstration corridor and `y_m` is lateral distance from it. The service receives no ground-truth train position.
+The simulation frontend sends three synchronized 250 ms PCM16 streams to `ws://localhost:8001/ws/simulation`. Sensor coordinates use the shared east/north frame in `shared/simulation_geometry.json`: `x_m` is east and `y_m` is north. The service receives no ground-truth train position. A trailing one-second analysis window is timestamped at its center; its `train_state_estimate` is then sent in order to the user backend.
+
+The user-facing event contains `latitude`, `longitude`, `speed_mps`,
+`length_m`, `provisional_length_m`, `direction_deg_from_east`,
+`confidence`, `uncertainty`, `status`, and `source: "acoustic_array"`.
+Length stays provisional while the train occupies the acoustic field and becomes
+stable only after the rear clears. The maximum inferred occupancy is 2,000 m,
+which is a safety bound rather than a configured train truth.
 
 Run the inference tests with:
 

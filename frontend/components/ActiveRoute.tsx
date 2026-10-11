@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type Ref } from "react";
+import { useEffect, useState, type Ref } from "react";
 import type { PlaceResult, RouteInfo, RouteStep } from "@/lib/googleMaps";
 import { conflictRoadLabel, type RouteConflict } from "@/lib/routeCrossing";
 
@@ -30,6 +30,12 @@ export default function ActiveRoute({
   const step = route.steps[0];
   const upcoming = route.steps[1];
   const [muted, setMuted] = useState(false);
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const instruction = step?.instruction ?? `Head toward ${destination.name}`;
   const detail =
@@ -43,8 +49,8 @@ export default function ActiveRoute({
   const effectiveSeconds = route.expectedTravelTimeSeconds + totalWait;
   const durationLabel = formatTripDuration(effectiveSeconds);
   const distanceLabelTotal = formatTripDistance(route.distanceMeters);
-  const arrival = new Date(
-    Date.now() + Math.max(0, effectiveSeconds) * 1000
+  const arrival = now === null ? "—" : new Date(
+    now + Math.max(0, effectiveSeconds) * 1000
   ).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const waitMinutes =
     totalWait > 0 ? Math.max(1, Math.round(totalWait / 60)) : 0;

@@ -164,4 +164,10 @@ export function mapRouteDistanceToAcousticS(distanceM: number, routeLengthM: num
   return clamp(normalized * (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2) - SIMULATION_START_MARGIN_M, -SIMULATION_START_MARGIN_M, TRACK_LENGTH_M + SIMULATION_START_MARGIN_M);
 }
 
+/** Project an acoustic rail coordinate back onto the visible SCDOT route. */
+export function acousticSToRouteDistance(s: number, routeLengthM: number) {
+  const normalized = (s + SIMULATION_START_MARGIN_M) / (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2);
+  return clamp(normalized * routeLengthM, 0, routeLengthM);
+}
+
 export { SCENE_SCALE };

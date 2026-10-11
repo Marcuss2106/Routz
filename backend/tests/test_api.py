@@ -40,6 +40,30 @@ def _prediction(sequence: int = 1, status: str = "approaching") -> dict:
     }
 
 
+def _estimate(sequence: int = 1) -> dict:
+    return {
+        "type": "train_state_estimate",
+        "simulation_id": "acoustic-demo",
+        "sequence": sequence,
+        "simulation_time_s": float(sequence),
+        "train_id": "acoustic-train-001",
+        "track_id": "acoustic-track-001",
+        "latitude": 34.0007,
+        "longitude": -81.0348,
+        "speed_mps": 12.0,
+        "length_m": 140.0,
+        "provisional_length_m": None,
+        "direction_deg_from_east": 0.0,
+        "status": "tracking",
+        "confidence": {"position": 0.91, "speed": 0.84, "length": 0.62, "direction": 0.97},
+        "uncertainty": {"position_m": 6.5, "speed_mps": 0.8, "length_m": 18.0, "direction_deg": 4.0},
+        "source": "acoustic_array",
+        "label": "simulated_acoustic_estimate",
+        "track_position_m": 120.0,
+        "crossings": [],
+    }
+
+
 def test_speech_uses_stored_text_and_caches_it() -> None:
     calls: list[str] = []
 
@@ -134,3 +158,27 @@ def test_websocket_receives_the_latest_alert() -> None:
     assert message["type"] == "route_update"
     assert message["label"] == "estimate"
     assert message["alert"]["text"].startswith("Simulation. crossing 001")
+
+
+def test_canonical_acoustic_estimate_is_replayed_and_resettable() -> None:
+    client = TestClient(create_app(_settings()))
+    headers = {"Authorization": "Bearer test-token"}
+    accepted = client.post("/api/predictions", json=_estimate(4), headers=headers)
+    assert accepted.status_code == 200
+    event = accepted.json()["event"]
+    assert event["type"] == "train_state_estimate"
+    assert event["source"] == "acoustic_array"
+    assert event["length_m"] == 140.0
+    with client.websocket_connect("/ws/updates") as websocket:
+        replay = websocket.receive_json()
+    assert replay["type"] == "train_state_estimate"
+    assert replay["sequence"] == 4
+
+    reset = client.post(
+        "/api/predictions",
+        json={"type": "simulation_reset", "simulation_id": "acoustic-demo"},
+        headers=headers,
+    )
+    assert reset.status_code == 200
+    restarted = client.post("/api/predictions", json=_estimate(0), headers=headers)
+    assert restarted.status_code == 200

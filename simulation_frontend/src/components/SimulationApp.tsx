@@ -7,7 +7,7 @@ import { SimulationControls } from "@/components/controls/SimulationControls";
 import { loadRailroad, SimulationSocket } from "@/lib/websocket";
 import { AudioSimulationSocket, buildAudioChunk } from "@/lib/audioWebsocket";
 import { useTrainAudioSource } from "@/lib/audioSource";
-import { getAudioSensors, simulateSensorReadings } from "@/lib/simulation";
+import { getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
 
 const TrainScene = dynamic(() => import("@/components/simulation/TrainScene"), {
@@ -31,6 +31,11 @@ export default function SimulationApp() {
     () => getAudioSensors(railroad?.route.length_m ?? 800),
     [railroad?.route.length_m],
   );
+  const estimateErrorM = useMemo(() => {
+    if (!current || !railroad || audioPrediction?.type !== "train_state_estimate" || audioPrediction.track_position_m == null) return null;
+    const truthS = mapRouteDistanceToAcousticS(current.distance_along_route_m, railroad.route.length_m);
+    return Math.abs(truthS - audioPrediction.track_position_m);
+  }, [audioPrediction, current, railroad]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,7 +127,9 @@ export default function SimulationApp() {
         {audioPrediction?.type === "train_state_estimate" && <>
           <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Position</span><strong>{audioPrediction.track_position_m == null ? "—" : `${audioPrediction.track_position_m.toFixed(1)} m`}</strong></div>
           <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Speed / direction</span><strong>{audioPrediction.speed_mps == null ? "—" : `${audioPrediction.speed_mps.toFixed(1)} m/s · ${audioPrediction.direction_deg_from_east?.toFixed(0) ?? "—"}°`}</strong></div>
-          <div className="sensor-row"><i style={{ background: "#a94334" }} /><span>Length</span><strong>{audioPrediction.length_m == null ? "pending" : `${audioPrediction.length_m.toFixed(1)} m`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Length</span><strong>{audioPrediction.length_m == null ? `${audioPrediction.provisional_length_m?.toFixed(1) ?? "—"} m provisional` : `${audioPrediction.length_m.toFixed(1)} m stable`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Confidence / ±position</span><strong>{Math.round(audioPrediction.confidence.position * 100)}% · {audioPrediction.uncertainty.position_m == null ? "—" : `${audioPrediction.uncertainty.position_m.toFixed(1)} m`}</strong></div>
+          <div className="sensor-row"><i style={{ background: "#7c3aed" }} /><span>Truth vs estimate</span><strong>{estimateErrorM == null ? "—" : `${estimateErrorM.toFixed(1)} m`}</strong></div>
         </>}
       </aside>
       {!railroad && !error && <div className="scene-message"><LoaderCircle className="spin" /> Loading SCDOT rail geometry…</div>}

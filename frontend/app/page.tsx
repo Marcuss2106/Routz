@@ -22,7 +22,7 @@ import {
 import { readCurrentLocation } from "@/lib/here";
 import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/lib/routeCrossing";
 import type { BlockagePrediction, TrainObservation } from "@/lib/trains";
-import { useTrainStream } from "@/lib/trainStream";
+import { estimateToObservation, useTrainStream, type TrainStateEstimateEvent } from "@/lib/trainStream";
 import { registerRouteSpeech, type RouteTranscript } from "@/lib/voice";
 
 /** Bias a spoken name to the demo city so Routes can resolve it as an address. */
@@ -69,6 +69,7 @@ function MapScreen() {
   const [conflicts, setConflicts] = useState<RouteConflict[]>([]);
   const [wasRerouted, setWasRerouted] = useState(false);
   const [train, setTrain] = useState<TrainObservation | null>(null);
+  const [estimate, setEstimate] = useState<TrainStateEstimateEvent | null>(null);
   const [predictions, setPredictions] = useState<BlockagePrediction[]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -82,6 +83,11 @@ function MapScreen() {
     if (!route || candidates.length < 2) return null;
     return candidates.filter((c) => c !== route).map((c) => c.path);
   }, [route, candidates]);
+
+  const displayedConflicts = useMemo(
+    () => (route ? findRouteConflicts(route, predictions) : conflicts),
+    [conflicts, predictions, route]
+  );
 
   useEffect(() => {
     const sheet = sheetRef.current;
@@ -229,12 +235,13 @@ function MapScreen() {
     const scored = scoreRouteCandidates(candidates, predictions);
     const best = scored[0];
     if (!best) return;
-    setConflicts(findRouteConflicts(route, predictions));
     if (best.route !== route && best.conflicts.length === 0) {
       const currentConflicts = findRouteConflicts(route, predictions);
       if (currentConflicts.length > 0) {
+        // This effect is the live crossing-avoidance subscription: a new
+        // acoustic event may promote a safer already-fetched route.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setRoute(best.route);
-        setConflicts(best.conflicts);
         setWasRerouted(true);
       }
     }
@@ -242,6 +249,7 @@ function MapScreen() {
 
   const handleTrainObservation = useCallback(
     (obs: TrainObservation | null, preds: BlockagePrediction[]) => {
+      setEstimate(null);
       setTrain(obs);
       setPredictions(preds);
       if (!obs) {
@@ -254,8 +262,17 @@ function MapScreen() {
 
   const liveStatus = useTrainStream(
     useCallback(
-      (env) => handleTrainObservation(env.observation, env.predictions),
-      [handleTrainObservation]
+      (event) => {
+        setEstimate(event);
+        const observation = event ? estimateToObservation(event) : null;
+        setTrain(observation);
+        setPredictions(event?.predictions ?? []);
+        if (!observation) {
+          setWasRerouted(false);
+          setConflicts([]);
+        }
+      },
+      []
     )
   );
 
@@ -321,6 +338,7 @@ function MapScreen() {
           routePath={route?.path ?? null}
           altPaths={altPaths}
           train={train}
+          estimate={estimate}
           predictions={predictions}
           isCalculating={routeLoading}
           bottomInset={sheetHeight + 16}
@@ -334,7 +352,7 @@ function MapScreen() {
           destination={destination}
           onEnd={handleClearRoute}
           barRef={sheetRef}
-          conflicts={conflicts}
+          conflicts={displayedConflicts}
           wasRerouted={wasRerouted}
           candidateCount={candidates.length}
         />
@@ -446,6 +464,7 @@ function MapScreen() {
               <div className="mt-3">
                 <TrainPanel
                   observation={train}
+                  estimate={estimate}
                   predictions={predictions}
                   onObservation={handleTrainObservation}
                   liveStatus={liveStatus}

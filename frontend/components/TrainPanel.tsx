@@ -9,10 +9,11 @@ import {
   type BlockagePrediction,
   type TrainObservation,
 } from "@/lib/trains";
-import { getRoutzApiUrl, postTrainObservation, type LiveStatus } from "@/lib/trainStream";
+import { getRoutzApiUrl, postTrainObservation, type LiveStatus, type TrainStateEstimateEvent } from "@/lib/trainStream";
 
 interface TrainPanelProps {
   observation: TrainObservation | null;
+  estimate?: TrainStateEstimateEvent | null;
   predictions: BlockagePrediction[];
   onObservation: (obs: TrainObservation | null, predictions: BlockagePrediction[]) => void;
   liveStatus: LiveStatus;
@@ -85,13 +86,10 @@ function sampleJson(observedAt: string): string {
   return JSON.stringify({ ...SAMPLE_OBSERVATION, observedAt }, null, 2);
 }
 
-export default function TrainPanel({ observation, predictions, onObservation, liveStatus }: TrainPanelProps) {
+export default function TrainPanel({ observation, estimate = null, predictions, onObservation, liveStatus }: TrainPanelProps) {
   const [open, setOpen] = useState(false);
   // Static initial text (prerender-safe); refreshed to "now" on the client.
   const [draft, setDraft] = useState(() => sampleJson("2026-10-10T00:00:00Z"));
-  useEffect(() => {
-    setDraft(sampleJson(new Date().toISOString()));
-  }, []);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
@@ -101,13 +99,19 @@ export default function TrainPanel({ observation, predictions, onObservation, li
     [predictions]
   );
 
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const staleLabel = useMemo(() => {
-    if (!observation) return null;
-    const ageS = (Date.now() - Date.parse(observation.observedAt)) / 1000;
+    if (!observation || now === null) return null;
+    const ageS = (now - Date.parse(observation.observedAt)) / 1000;
     if (ageS < 90) return null;
     if (ageS < 3600) return `Observation is ${Math.round(ageS / 60)} min old — predictions are stale. Tap Sample for live data.`;
     return `Observation is ${(ageS / 3600).toFixed(1)} hr old — predictions are stale. Tap Sample for live data.`;
-  }, [observation]);
+  }, [now, observation]);
 
   async function applyObservation(raw: string) {
     setError(null);
@@ -172,7 +176,7 @@ export default function TrainPanel({ observation, predictions, onObservation, li
           </span>
           <span className="block truncate text-[13px] text-[#0B1B33]/55">
             {observation
-              ? `${observation.trainId} · ${(observation.speedMps * 2.23694).toFixed(0)} mph · simulated`
+              ? `${observation.trainId} · ${(observation.speedMps * 2.23694).toFixed(0)} mph · acoustic estimate`
               : "Tap to simulate a train observation"}
           </span>
           <span className="block truncate text-[12px] text-[#0B1B33]/40">
@@ -182,7 +186,7 @@ export default function TrainPanel({ observation, predictions, onObservation, li
         <span className="flex items-center gap-1.5">
           {observation && (
             <span className="rounded-full bg-[#7A5C00]/10 px-2 py-0.5 text-[11px] font-bold text-[#7A5C00]">
-              SIM
+              {estimate ? "ACOUSTIC" : "SIM"}
             </span>
           )}
           <span className={`text-[#0B1B33]/40 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden>
@@ -235,6 +239,19 @@ export default function TrainPanel({ observation, predictions, onObservation, li
 
           {observation && (
             <div className="mt-3">
+              {estimate && (
+                <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-lg bg-[#7C3AED]/[0.07] px-3 py-2 text-[12px] text-[#4C1D95]">
+                  <span>Status: <strong>{estimate.status.replaceAll("_", " ")}</strong></span>
+                  <span>Position confidence: <strong>{Math.round(estimate.confidence.position * 100)}%</strong></span>
+                  <span>Position uncertainty: <strong>±{Math.round(estimate.uncertainty.position_m ?? 0)} m</strong></span>
+                  <span>Direction: <strong>{estimate.direction_deg_from_east === null ? "—" : `${estimate.direction_deg_from_east.toFixed(0)}°`}</strong></span>
+                  <span className="col-span-2">
+                    Length: <strong>{estimate.length_m === null ? `${Math.round(estimate.provisional_length_m ?? 0)} m provisional` : `${Math.round(estimate.length_m)} m stable`}</strong>
+                    {estimate.uncertainty.length_m !== null ? ` ±${Math.round(estimate.uncertainty.length_m)} m` : ""}
+                  </span>
+                  <span className="col-span-2 text-[#4C1D95]/70">Source: acoustic array · {estimate.label.replaceAll("_", " ")}</span>
+                </div>
+              )}
               {staleLabel && (
                 <p role="alert" className="mb-2 rounded-lg bg-[#E65100]/10 px-3 py-2 text-[13px] font-medium text-[#9C3D00]">
                   ⚠️ {staleLabel}

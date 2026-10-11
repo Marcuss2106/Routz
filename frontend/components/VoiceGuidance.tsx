@@ -48,7 +48,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const [streamLost, setStreamLost] = useState(false);
   const playerRef = useRef<ReturnType<typeof createVoicePlayer> | null>(null);
   const alertRef = useRef<SpokenAlert | null>(null);
-  alertRef.current = alert;
+  useEffect(() => {
+    alertRef.current = alert;
+  }, [alert]);
 
   function player() {
     if (!playerRef.current) {

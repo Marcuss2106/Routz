@@ -9,7 +9,8 @@ import {
   type PlaceResult,
   type RoutzCoordinate,
 } from "@/lib/googleMaps";
-import { trainEndpoints, type BlockagePrediction, type TrainObservation } from "@/lib/trains";
+import { offsetLatLon, trainEndpoints, type BlockagePrediction, type TrainObservation } from "@/lib/trains";
+import type { TrainStateEstimateEvent } from "@/lib/trainStream";
 
 interface GoogleMapProps {
   origin: PlaceResult | null;
@@ -18,6 +19,7 @@ interface GoogleMapProps {
   /** Alternate candidates (drawn faint) when crossing-aware routing found options. */
   altPaths?: RoutzCoordinate[][] | null;
   train?: TrainObservation | null;
+  estimate?: TrainStateEstimateEvent | null;
   predictions?: BlockagePrediction[] | null;
   isCalculating?: boolean;
   /** Pixels to keep clear above the bottom sheet when fitting the route. */
@@ -51,10 +53,10 @@ function crossingIcon(color: string): string {
 }
 
 /** Train front marker, as a data URL. */
-function trainIcon(): string {
+function trainIcon(color = "#0B1B33"): string {
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>` +
-    `<rect x='2' y='2' width='30' height='30' rx='8' fill='#0B1B33' stroke='white' stroke-width='3'/>` +
+    `<rect x='2' y='2' width='30' height='30' rx='8' fill='${color}' stroke='white' stroke-width='3'/>` +
     `<text x='17' y='22.5' text-anchor='middle' font-family='Arial, sans-serif' font-size='15'>🚂</text>` +
     `</svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -84,6 +86,7 @@ export default function GoogleMap({
   routePath,
   altPaths = null,
   train = null,
+  estimate = null,
   predictions = null,
   isCalculating = false,
   bottomInset = 300,
@@ -244,15 +247,50 @@ export default function GoogleMap({
         }
       }
 
-      // Simulated train: front marker + body line to rear.
-      if (train) {
+      // Acoustic estimate: this is the detected train shown to the user.
+      if (estimate && estimate.latitude !== null && estimate.longitude !== null) {
+        try {
+          const length = estimate.length_m ?? estimate.provisional_length_m ?? 0;
+          const heading = (estimate.direction_deg_from_east ?? 0) * (Math.PI / 180);
+          const east = Math.cos(heading);
+          const north = Math.sin(heading);
+          const center = { lat: estimate.latitude, lon: estimate.longitude };
+          const front = offsetLatLon(center.lat, center.lon, east * length / 2, north * length / 2);
+          const rear = offsetLatLon(center.lat, center.lon, -east * length / 2, -north * length / 2);
+          const frontPos = { lat: front.lat, lng: front.lon };
+          const marker = new maps.Marker({
+            position: frontPos,
+            map,
+            title: `Acoustic estimate ${estimate.train_id} · ${estimate.status} · position ±${Math.round(estimate.uncertainty.position_m ?? 0)} m`,
+            icon: { url: trainIcon("#7C3AED"), scaledSize: new maps.Size(34, 34) },
+          });
+          overlaysRef.current.push(marker);
+          if (length > 0) {
+            const body = new maps.Polyline({
+              path: [frontPos, { lat: rear.lat, lng: rear.lon }],
+              geodesic: true,
+              strokeColor: "#7C3AED",
+              strokeOpacity: 0.9,
+              strokeWeight: 7,
+            });
+            body.setMap(map);
+            overlaysRef.current.push(body);
+            trainBounds.extend({ lat: rear.lat, lng: rear.lon });
+          }
+          trainBounds.extend(frontPos);
+          hasTrainPoints = true;
+        } catch {
+          // Acoustic overlay is best-effort.
+        }
+      } else if (train) {
+        // Manual compatibility observation: front marker + body line to rear.
         try {
           const { front, rear } = trainEndpoints(train);
           const frontPos = { lat: front.lat, lng: front.lon };
           const marker = new maps.Marker({
             position: frontPos,
             map,
-            title: `Simulated train ${train.trainId}`,
+            title: `Manual train ${train.trainId}`,
             icon: { url: trainIcon(), scaledSize: new maps.Size(34, 34) },
           });
           overlaysRef.current.push(marker);
@@ -307,7 +345,7 @@ export default function GoogleMap({
     } catch {
       // Rendering is best-effort; keep the base map usable.
     }
-  }, [origin, destination, routePath, altPaths, train, predictions, bottomInset, topInset]);
+  }, [origin, destination, routePath, altPaths, train, estimate, predictions, bottomInset, topInset]);
 
   return (
     <div className="relative h-full w-full bg-[#E8EEF4]">

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app.pipeline import SimulationPipeline
-from app.publisher import post_crossing_prediction
+from app.publisher import PredictionPublisher
 from app.schemas import MicrophoneAudioChunk, SimulationReset
 from app.settings import Settings
 
@@ -24,7 +24,20 @@ def create_app() -> FastAPI:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     settings = Settings.from_env()
-    app = FastAPI(title="Routez simulation backend")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        publisher = PredictionPublisher(
+            settings.predictions_url,
+            settings.internal_api_token,
+        )
+        await publisher.start()
+        app.state.publisher = publisher
+        try:
+            yield
+        finally:
+            await publisher.close()
+
+    app = FastAPI(title="Routez simulation backend", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -59,14 +72,24 @@ def create_app() -> FastAPI:
                         {"type": "ingest_error", "reason": "expected_json_text"}
                     )
                     continue
-                await _handle_text(websocket, pipeline, incoming["text"])
+                await _handle_text(
+                    websocket,
+                    pipeline,
+                    websocket.app.state.publisher,
+                    incoming["text"],
+                )
         except WebSocketDisconnect:
             return
 
     return app
 
 
-async def _handle_text(websocket: WebSocket, pipeline: SimulationPipeline, raw: str) -> None:
+async def _handle_text(
+    websocket: WebSocket,
+    pipeline: SimulationPipeline,
+    publisher: PredictionPublisher,
+    raw: str,
+) -> None:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -82,6 +105,7 @@ async def _handle_text(websocket: WebSocket, pipeline: SimulationPipeline, raw: 
             await websocket.send_json({"type": "ingest_error", "reason": "invalid_message"})
             return
         pipeline.reset(message.simulation_id)
+        await publisher.publish(message.model_dump(mode="json"))
         await websocket.send_json(
             {"type": "simulation_reset_ack", "simulation_id": message.simulation_id}
         )
@@ -98,12 +122,7 @@ async def _handle_text(websocket: WebSocket, pipeline: SimulationPipeline, raw: 
     result = pipeline.ingest(chunk)
     await websocket.send_json(result.frontend_message)
     if result.accepted and result.backend_message is not None:
-        await asyncio.to_thread(
-            post_crossing_prediction,
-            result.backend_message,
-            pipeline.predictions_url,
-            pipeline.internal_api_token,
-        )
+        await publisher.publish(result.backend_message)
 
 
 app = create_app()

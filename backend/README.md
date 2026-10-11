@@ -67,7 +67,19 @@ The server listens on port `8002` (`USER_BACKEND_PORT`). `GET /health` reports w
 
 `POST /api/voice/transcribe` accepts a short recording and returns a start and destination. `POST /api/voice/route` stores the spoken summary of a route the map already calculated. The map requests `GET /api/speech/{alert_id}` and only receives audio for a sentence this service already composed.
 
-`POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>` and the crossing-prediction JSON from the simulation backend. A repeated situation is accepted and not spoken again. A duplicate or older `sequence` returns 409. `{"type":"simulation_reset","simulation_id":"..."}` clears that run.
+`POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>`. Its
+canonical live payload is `type: "train_state_estimate"` with latitude,
+longitude, speed, stable or provisional length, numeric direction,
+confidence/uncertainty, status, and acoustic source. The user API adds crossing
+forecasts, stores the latest event for reconnecting WebSocket clients, and
+broadcasts it on `WS /ws/updates`; speech alerts remain a separate
+`route_update` event. A repeated situation is accepted and not spoken again. A
+duplicate or older `sequence` returns 409. `{"type":"simulation_reset","simulation_id":"..."}` clears that run and is broadcast to clients.
+
+The optional `TIGERDATA_DATABASE_URL`/`DATABASE_URL` enables an ordered,
+background write to the `train_state_estimates` table, compatible with Tiger
+Data/TimescaleDB. Without it, persistence is disabled and the live path stays
+in memory.
 
 ### Tests
 
