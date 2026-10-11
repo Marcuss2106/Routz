@@ -3,3 +3,8 @@
 /.next/
 /.venv/
 /artifacts/acoustic-validation/
+
+# Local environment files; keep committed templates trackable.
+.env
+.env.*
+!.env.example
