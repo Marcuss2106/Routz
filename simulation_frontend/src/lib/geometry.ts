@@ -135,6 +135,16 @@ export function railPositionToGround(sM: number, elevationM = 0): GroundPosition
   return [point.x_m, elevationM, point.y_m];
 }
 
+export function mapRouteDistanceToAcousticS(distanceM: number, routeLengthM: number) {
+  const normalized = routeLengthM > 0 ? distanceM / routeLengthM : 0;
+  return clamp(normalized * (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2) - SIMULATION_START_MARGIN_M, -SIMULATION_START_MARGIN_M, TRACK_LENGTH_M + SIMULATION_START_MARGIN_M);
+}
+
+export function acousticSToRouteDistance(s: number, routeLengthM: number) {
+  const normalized = (s + SIMULATION_START_MARGIN_M) / (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2);
+  return clamp(normalized * routeLengthM, 0, routeLengthM);
+}
+
 export function railHeadingRadians(sM: number, direction: 1 | -1 = 1) {
   const tangent = railTangentAtS(sM);
   const heading = Math.atan2(tangent.north, tangent.east);

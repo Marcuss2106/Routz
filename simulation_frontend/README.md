@@ -29,6 +29,14 @@ on `/ws/simulation` and returns `train_state_estimate` events containing
 track-constrained acoustic position, speed, numeric direction, confidence, and
 an occupancy-derived length once the train clears the array.
 
+Ground-level roads near the active rail route also carry a deterministic set of
+small traffic vehicles. Their visual trajectories are used only by the scene
+and generator. Each microphone receives the corresponding synthetic engine,
+tire, road-texture, distance-attenuated, and propagation-delayed mixture; car
+identities and positions are not included in the WebSocket payload. This gives
+the future backend classifier realistic nuisance audio while preserving the
+microphone-only inference boundary.
+
 ## Getting Started
 
 Run the two backends and frontend in three separate terminals. Keep all processes running.

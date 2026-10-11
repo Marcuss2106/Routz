@@ -50,6 +50,9 @@ The simulator may use ground truth internally to synthesize extended-source
 audio and to render a debug truth overlay. Ground truth is never placed in the
 audio wire contract or used by the acoustic estimator. The visible 3D train
 follows the acoustic estimate by default; use **Show truth** only to compare it.
+Nearby ground-level road traffic is also simulated as hidden nuisance sources:
+cars are rendered in the scene and their attenuated, propagation-delayed engine
+and tire signatures are mixed independently into the three microphone channels.
 The authoritative rail-motion service in [`backend`](backend/README.md) supplies
 the live railroad scene, while [`simulation_backend`](simulation_backend/README.md)
 supplies the acoustic estimate stream. The `frontend` directory remains the

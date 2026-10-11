@@ -3,13 +3,13 @@ import {
   AUDIO_SAMPLE_RATE_HZ,
   SCENE_SCALE,
   SENSOR_DEFINITIONS,
-  SIMULATION_START_MARGIN_M,
   SOUND_SPEED_MPS,
   TRACK_LENGTH_M,
   clamp,
   distanceOnGround,
   railPositionToGround,
 } from "@/lib/geometry";
+import { trafficCarPose, type TrafficCar } from "@/lib/traffic";
 import type { AudioSensor, AudioTrackerLocation, ScenePoint, SensorReading, TrainAudioSource, TrainState } from "@/types/simulation";
 
 export {
@@ -19,6 +19,8 @@ export {
   SENSOR_DEFINITIONS,
   SOUND_SPEED_MPS,
   TRACK_LENGTH_M,
+  acousticSToRouteDistance,
+  mapRouteDistanceToAcousticS,
 } from "@/lib/geometry";
 
 export const VISUAL_EXAGGERATION = {
@@ -100,14 +102,18 @@ export function sensorScenePosition(route: ScenePoint[], sensor: AudioSensor): S
   ];
 }
 
-export function simulateSensorReadings(state: TrainState, sensors: AudioSensor[]): SensorReading[] {
+export function simulateSensorReadings(state: TrainState, sensors: AudioSensor[], trafficCars: readonly TrafficCar[] = []): SensorReading[] {
   return sensors.map((sensor) => {
     const distance = Math.min(
       ...state.vehicles.map((vehicle) =>
         Math.hypot(vehicle.distance_m - sensor.routeDistanceM, sensor.lateralOffsetM),
       ),
     );
-    const amplitude = Math.min(1, 0.04 + 1 / (1 + distance * 0.018));
+    const trafficAmplitude = trafficCars.reduce((total, car) => {
+      const carDistance = distanceOnGround(sensor.position, trafficCarPose(car, state.simulation_time_s).acousticPosition);
+      return total + 0.16 / (1 + carDistance * 0.02);
+    }, 0);
+    const amplitude = Math.min(1, 0.04 + 1 / (1 + distance * 0.018) + trafficAmplitude);
     return {
       sensorId: sensor.id,
       amplitude,
@@ -147,6 +153,7 @@ export function generateMicrophoneSamples(
   audioSource: TrainAudioSource | null,
   signedSpeedMps = 16,
   noiseLevel = 0.035,
+  trafficCars: readonly TrafficCar[] = [],
 ): Float32Array {
   const samples = new Float32Array(AUDIO_CHUNK_SAMPLES);
   const segmentCount = 8;
@@ -169,21 +176,31 @@ export function generateMicrophoneSamples(
       signal += sourceSample(audioSource, emissionTime, sensor.phase + segmentIndex * 0.037) * attenuation * locomotiveGain * carVariation;
     }
     signal /= segmentCount;
+    let trafficSignal = 0;
+    for (const car of trafficCars) {
+      // Estimate the retarded source position once, then refine its distance.
+      // This gives each microphone a different car arrival time as well as a
+      // different level, which is useful training variation for TDOA models.
+      let carPose = trafficCarPose(car, receiveTime);
+      let distance = distanceOnGround(sensor.position, carPose.acousticPosition);
+      const emissionTime = receiveTime - distance / SOUND_SPEED_MPS;
+      carPose = trafficCarPose(car, emissionTime);
+      distance = distanceOnGround(sensor.position, carPose.acousticPosition);
+      if (distance > 1_800) continue;
+      const attenuation = 1 / (1 + distance * 0.02);
+      const doppler = 1 + car.direction * car.speedMps / SOUND_SPEED_MPS * 0.12;
+      const engine = Math.sin(emissionTime * Math.PI * 2 * car.engineHz * doppler + car.phase) * 0.34;
+      const tire = Math.sin(emissionTime * Math.PI * 2 * (118 + car.engineHz * 0.14) + car.phase * 1.7) * 0.16;
+      const roadTexture = deterministicNoise(index + Math.round(car.phase * 100), emissionTime * 1.07, car.phase) * 0.18;
+      trafficSignal += (engine + tire + roadTexture) * attenuation * car.audioGain;
+    }
+    const roadAmbience = trafficCars.length > 0
+      ? deterministicNoise(index, receiveTime, sensor.phase + 11.4) * Math.min(0.025, trafficCars.length * 0.003)
+      : 0;
     const noise = deterministicNoise(index, simulationTime, sensor.phase);
-    samples[index] = clamp(signal * 0.78 + noise * noiseLevel * 0.16, -1, 1);
+    samples[index] = clamp(signal * 0.78 + trafficSignal * 0.42 + roadAmbience + noise * noiseLevel * 0.16, -1, 1);
   }
   return samples;
-}
-
-export function mapRouteDistanceToAcousticS(distanceM: number, routeLengthM: number) {
-  const normalized = routeLengthM > 0 ? distanceM / routeLengthM : 0;
-  return clamp(normalized * (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2) - SIMULATION_START_MARGIN_M, -SIMULATION_START_MARGIN_M, TRACK_LENGTH_M + SIMULATION_START_MARGIN_M);
-}
-
-/** Project an acoustic rail coordinate back onto the visible SCDOT route. */
-export function acousticSToRouteDistance(s: number, routeLengthM: number) {
-  const normalized = (s + SIMULATION_START_MARGIN_M) / (TRACK_LENGTH_M + SIMULATION_START_MARGIN_M * 2);
-  return clamp(normalized * routeLengthM, 0, routeLengthM);
 }
 
 export { SCENE_SCALE };

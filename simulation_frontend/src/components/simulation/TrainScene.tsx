@@ -10,9 +10,11 @@ import { Train } from "./Train";
 import { Microphone } from "./Microphone";
 import { SoundWaves } from "./SoundWaves";
 import { CrossingMarkers, RoadLayer } from "./Roads";
+import { TrafficLayer } from "./Traffic";
 import { BuildingLayer } from "./Buildings";
 import { getAudioSensors, sensorScenePosition, VISUAL_EXAGGERATION } from "@/lib/simulation";
 import { useSimulationStore } from "@/stores/simulationStore";
+import type { TrafficCar } from "@/lib/traffic";
 
 const INITIAL_CAMERA_POSITION = new THREE.Vector3(2400, 2200, 2400);
 
@@ -83,7 +85,7 @@ function CameraRig({ routeLength }: { routeLength: number }) {
   return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} minDistance={180} maxDistance={55000} maxPolarAngle={Math.PI / 2.08} />;
 }
 
-export default function TrainScene() {
+export default function TrainScene({ trafficCars }: { trafficCars: TrafficCar[] }) {
   const railroad = useSimulationStore((state) => state.railroad)!;
   const sensorReadings = useSimulationStore((state) => state.sensorReadings);
   const sensors = useMemo(
@@ -104,6 +106,7 @@ export default function TrainScene() {
         <directionalLight castShadow position={[-9000, 16000, 7000]} intensity={2.2} color="#fff5d8" shadow-mapSize={[2048, 2048]} shadow-camera-far={45000} shadow-camera-left={-18000} shadow-camera-right={18000} shadow-camera-top={18000} shadow-camera-bottom={-18000} />
         <mesh rotation-x={-Math.PI / 2} receiveShadow position-y={-1}><circleGeometry args={[17400, 96]} /><meshStandardMaterial color="#b9c0a5" roughness={1} /></mesh>
         <RoadLayer roads={railroad.roads ?? []} />
+        <TrafficLayer cars={trafficCars} />
         <BuildingLayer landmarks={railroad.landmarks ?? []} />
         <Railroad lines={railroad.network} route={railroad.route.points} />
         <CrossingMarkers crossings={railroad.crossings ?? []} />

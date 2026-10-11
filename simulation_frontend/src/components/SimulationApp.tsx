@@ -8,6 +8,7 @@ import { loadRailroad, SimulationSocket } from "@/lib/websocket";
 import { AudioSimulationSocket, buildAudioChunk } from "@/lib/audioWebsocket";
 import { useTrainAudioSource } from "@/lib/audioSource";
 import { getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
+import { buildTrafficCars } from "@/lib/traffic";
 import { useSimulationStore } from "@/stores/simulationStore";
 
 const TrainScene = dynamic(() => import("@/components/simulation/TrainScene"), {
@@ -30,6 +31,10 @@ export default function SimulationApp() {
   const sensors = useMemo(
     () => getAudioSensors(railroad?.route.length_m ?? 800),
     [railroad?.route.length_m],
+  );
+  const trafficCars = useMemo(
+    () => railroad ? buildTrafficCars(railroad.roads ?? [], railroad.route.points) : [],
+    [railroad],
   );
   const estimateErrorM = useMemo(() => {
     if (!current || !railroad || audioPrediction?.type !== "train_state_estimate" || audioPrediction.track_position_m == null) return null;
@@ -82,7 +87,7 @@ export default function SimulationApp() {
   useEffect(() => {
     if (!current || !railroad) return;
     const store = useSimulationStore.getState();
-    store.setSensorReadings(simulateSensorReadings(current, sensors));
+    store.setSensorReadings(simulateSensorReadings(current, sensors, trafficCars));
     if (current.simulation_time_s + .001 < nextAudioTimeRef.current - .25) {
       sequenceRef.current = 0;
       nextAudioTimeRef.current = 0;
@@ -106,13 +111,14 @@ export default function SimulationApp() {
         sensors,
         audioSource,
         railroad.route.length_m,
+        trafficCars,
       );
       if (!audioSocketRef.current?.send(chunk)) break;
       sequenceRef.current += 1;
       nextAudioTimeRef.current += .25;
       chunksSent += 1;
     }
-  }, [audioSource, current, railroad, sensors]);
+  }, [audioSource, current, railroad, sensors, trafficCars]);
 
   return (
     <main className="app-shell">
@@ -134,7 +140,7 @@ export default function SimulationApp() {
       </aside>
       {!railroad && !error && <div className="scene-message"><LoaderCircle className="spin" /> Loading SCDOT rail geometry…</div>}
       {error && !railroad && <div className="scene-message error"><strong>Unable to load the network</strong><span>{error}</span></div>}
-      {railroad && <TrainScene />}
+      {railroad && <TrainScene trafficCars={trafficCars} />}
       <SimulationControls socketRef={socketRef} />
       <footer className="source-note">SCDOT rail · © OpenStreetMap contributors · Simulation, not for emergency use</footer>
     </main>

@@ -12,6 +12,7 @@ import type {
   TrainAudioSource,
   TrainState,
 } from "@/types/simulation";
+import type { TrafficCar } from "@/lib/traffic";
 
 const audioWsUrl = process.env.NEXT_PUBLIC_AUDIO_WS_URL ?? "ws://localhost:8001/ws/simulation";
 export const AUDIO_SIMULATION_ID = "routz-columbia-audio-001";
@@ -36,6 +37,7 @@ export function buildAudioChunk(
   sensors: AudioSensor[],
   audioSource: TrainAudioSource | null,
   routeLengthM: number,
+  trafficCars: readonly TrafficCar[] = [],
 ): MicrophoneAudioChunk {
   const trainPositionM = mapRouteDistanceToAcousticS(state.distance_along_route_m, routeLengthM);
   return {
@@ -57,6 +59,8 @@ export function buildAudioChunk(
           state.train_length_m,
           audioSource,
           state.speed_mps,
+          0.035,
+          trafficCars,
         ),
       ),
     })),
