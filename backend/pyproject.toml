@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115,<1",
     "httpx>=0.28.1",
+    "pyarrow>=14,<22",
     "pyproj>=3.6,<4",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
@@ -22,6 +23,7 @@ backend = "backend.main:run"
 user-backend = "backend.user_api:run"
 fetch-rail-data = "backend.fetch_data:main"
 fetch-road-data = "backend.fetch_roads:main"
+generate-train-dataset = "backend.dataset_generator:main"
 
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]

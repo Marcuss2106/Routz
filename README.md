@@ -37,6 +37,10 @@ the live railroad scene, while [`simulation_backend`](simulation_backend/README.
 supplies the acoustic estimate stream. The `frontend` directory remains the
 separate user-facing routing application from GitHub.
 
+The railroad backend also includes an offline, seeded Parquet journey generator
+that uses the full connected rail graph without starting the live simulation.
+See [`backend/DATASET_GUIDE.md`](backend/DATASET_GUIDE.md).
+
 ## Quick start (v1)
 
 ```bash
