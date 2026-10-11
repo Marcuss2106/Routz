@@ -24,6 +24,9 @@ export function useTrainAudioSource() {
       return;
     }
     const audioContext = new window.AudioContext();
+    // Suspend immediately: this context only decodes /train.wav, and a running
+    // context before any user gesture triggers the browser autoplay warning.
+    if (audioContext.state === "running") void audioContext.suspend();
 
     fetch("/train.wav")
       .then((response) => {

@@ -1,0 +1,25 @@
+# Routez TLS front door (Caddy).
+#
+# DuckDNS must point all three names at the same Vultr VM IP before
+# `docker compose up` so Caddy can issue Let's Encrypt certificates:
+#   routz-rail.duckdns.org     -> rail-service:8000 (scene + /ws/simulation)
+#   routz-user.duckdns.org     -> user-service:8002 (estimates, voice, /ws/updates)
+#   routz-acoustic.duckdns.org -> acoustic-service:8001 (mic chunks, /ws/simulation)
+#
+# Override any name with RAIL_DOMAIN / USER_DOMAIN / ACOUSTIC_DOMAIN in
+# deploy/.env (e.g. a single-domain test still needs three DNS names because
+# rail :8000 and acoustic :8001 both serve /ws/simulation).
+# Caddy handles ACME + WebSocket upgrades automatically; no extra header
+# config is needed for the FastAPI /ws/* sockets.
+
+{$RAIL_DOMAIN:routz-rail.duckdns.org} {
+	reverse_proxy rail-service:8000
+}
+
+{$USER_DOMAIN:routz-user.duckdns.org} {
+	reverse_proxy user-service:8002
+}
+
+{$ACOUSTIC_DOMAIN:routz-acoustic.duckdns.org} {
+	reverse_proxy acoustic-service:8001
+}
