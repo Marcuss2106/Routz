@@ -58,6 +58,34 @@ See [`backend/DATASET_GUIDE.md`](backend/DATASET_GUIDE.md).
 For deployment and verification scaffolding, see [`deploy/README.md`](deploy/README.md)
 and run `./scripts/verify.sh` after installing the backend and Node dependencies.
 
+## Full local demo
+
+After installing the Python dependencies for both Python services and the Node
+dependencies in both frontend folders, start the complete local workflow with:
+
+```bash
+./scripts/dev.sh
+```
+
+The launcher starts the railroad API on `8000`, acoustic API on `8001`, user
+API on `8002`, the user map on `3000`, and the 3D simulation on `3100`. It
+uses `deploy/.env` when present and otherwise supplies safe local defaults,
+including the shared internal token. If the services use different Python or
+Node installations, set `ROUTZ_BACKEND_PYTHON`, `ROUTZ_SIMULATION_PYTHON`, or
+`ROUTZ_NODE_DIR` before starting it.
+
+With the services running, verify the complete microphone-only path with:
+
+```bash
+./scripts/e2e_smoke.py
+```
+
+The smoke test generates a hidden synthetic acoustic capture, sends only
+microphone channels and geometry to the live acoustic WebSocket, waits for the
+canonical estimate on the user-backend WebSocket, checks that no simulator
+truth or audio crossed that boundary, and verifies that reset accepts sequence
+`0` again.
+
 ## Quick start (v1)
 
 ```bash
