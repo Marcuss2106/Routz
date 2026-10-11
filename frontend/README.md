@@ -140,7 +140,7 @@ Optional. Route search still runs in the browser if the voice backend is down.
 3. Tap **Voice** in the map header. That tap unlocks audio and speaks a short simulated line. Later crossing alerts are spoken only when a new alert arrives.
 4. Tap **Say route**, then say a start and a destination, such as “from Main Street to the hospital.” Tap **Listening** to send it, or wait eight seconds. The map draws that driving route and speaks the time and distance. “Take me to …” starts from the browser’s location. If that fix is unavailable, the start is a simulated point at Swearingen Engineering Center, 301 Main St, Columbia, SC.
 
-The page is labeled **SIMULATION / NOT FOR EMERGENCY USE**.
+The route sheet pulls down from the handle so the map stays visible. Simulated estimates stay labeled on alerts and predictions.
 
 ## Notes
 

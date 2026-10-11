@@ -67,7 +67,7 @@ routez/
 - With permission, use browser geolocation to display the ambulance's current location. Ask for that fix on the Say route tap. If the browser has no fix, start from a simulated point at Swearingen Engineering Center (301 Main St, Columbia) and label it simulated.
 - Display route candidates, rail crossings, predicted closure/clearance windows, selected route, and simulated ETA impact.
 - Receive real-time events from user-backend. A Voice toggle plays concise simulated alerts (predicted closure or clearance) by requesting `GET /api/speech/{alert_id}`. Say route records a short request, the user backend transcribes it, and the map draws that driving route and speaks the result. The tap unlocks audio for iPhone Safari. Voice is optional and must not block routing. Speak a crossing line only when its alert id changes.
-- Mark the entire experience **SIMULATION / NOT FOR EMERGENCY USE**.
+- The map does not show a persistent **SIMULATION / NOT FOR EMERGENCY USE** banner. The route sheet pulls down to a peek so the map stays visible. Keep simulated estimates labeled on alerts and predictions.
 
 ## End-to-end data flow
 
