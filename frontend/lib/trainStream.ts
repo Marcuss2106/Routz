@@ -9,7 +9,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Crossing } from "./crossings";
-import { shouldStoreTrainUpdate, type TrainUpdateClock } from "./routeRefresh";
 import {
   parseTrainObservation,
   type BlockagePrediction,
@@ -398,7 +397,6 @@ export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | nul
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
-    let lastClock: TrainUpdateClock | null = null;
 
     const connect = () => {
       if (stopped) return;
@@ -409,20 +407,11 @@ export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | nul
         try {
           const raw = JSON.parse(String(message.data)) as Record<string, unknown>;
           if (raw.type === "simulation_reset") {
-            lastClock = null;
             handlerRef.current(null);
             return;
           }
           if (raw.type !== "train_state_estimate") return;
-          const estimate = parseTrainStateEstimate(raw);
-          const clock = {
-            sourceId: `${estimate.simulation_id}:${estimate.train_id}`,
-            sequence: estimate.sequence,
-            simulationTimeS: estimate.simulation_time_s,
-          };
-          if (!shouldStoreTrainUpdate(lastClock, clock)) return;
-          lastClock = clock;
-          handlerRef.current(estimate);
+          handlerRef.current(parseTrainStateEstimate(raw));
         } catch {
           // Ignore malformed events; the reconnect snapshot resynchronizes state.
         }
@@ -483,19 +472,10 @@ export function useSimulationTrainStream(
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
-    let lastClock: TrainUpdateClock | null = null;
 
     const accept = (raw: unknown) => {
       try {
-        const state = parseSimulationTrainState(raw);
-        const clock = {
-          sourceId: state.train_id,
-          sequence: state.sequence,
-          simulationTimeS: state.simulation_time_s,
-        };
-        if (!shouldStoreTrainUpdate(lastClock, clock)) return;
-        lastClock = clock;
-        handlerRef.current(state);
+        handlerRef.current(parseSimulationTrainState(raw));
       } catch {
         // A later valid snapshot will resynchronize the display.
       }

@@ -121,20 +121,14 @@ function MapScreen() {
     refreshedAt: 0,
     requestId: 0,
   });
-  const [simulationReceivedAtMs, setSimulationReceivedAtMs] = useState<number | null>(null);
 
   const estimatedTrain = useMemo(
     () => (estimate ? estimateToObservation(estimate) : null),
     [estimate]
   );
   const train = useMemo(
-    () => simulationTrain
-      ? simulationStateToObservation(
-          simulationTrain,
-          new Date(simulationReceivedAtMs ?? Date.now()).toISOString()
-        )
-      : estimatedTrain,
-    [estimatedTrain, simulationReceivedAtMs, simulationTrain]
+    () => (simulationTrain ? simulationStateToObservation(simulationTrain) : estimatedTrain),
+    [estimatedTrain, simulationTrain]
   );
   const predictions = useMemo(() => {
     if (simulationTrain && train) {
@@ -459,10 +453,7 @@ function MapScreen() {
   );
 
   const simulationStatus = useSimulationTrainStream(
-    useCallback((state) => {
-      setSimulationReceivedAtMs(Date.now());
-      setSimulationTrain(state);
-    }, []),
+    useCallback((state) => setSimulationTrain(state), []),
     useCallback((crossings: Crossing[]) => setSimulationCrossings(crossings), []),
     useCallback((railRoute: RailRoutePoint[]) => setSimulationRailRoute(railRoute), [])
   );
