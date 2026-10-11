@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { AudioLines, LoaderCircle } from "lucide-react";
 import { SimulationControls } from "@/components/controls/SimulationControls";
 import { JunctionPrediction } from "@/components/JunctionPrediction";
-import { loadRailroad, SimulationSocket, getMixedContentHint, getSimulationApiUrl, getSimulationWsUrl } from "@/lib/websocket";
+import { loadRailroad, loadTrainSnapshot, SimulationSocket, getMixedContentHint, getSimulationApiUrl, getSimulationWsUrl } from "@/lib/websocket";
 import { AudioSimulationSocket, buildAudioChunk, getAudioWsUrl } from "@/lib/audioWebsocket";
 import { useTrainAudioSource } from "@/lib/audioSource";
 import { acousticSToRouteDistance, getAudioSensors, mapRouteDistanceToAcousticS, simulateSensorReadings } from "@/lib/simulation";
@@ -21,6 +21,7 @@ export default function SimulationApp() {
   const railroad = useSimulationStore((state) => state.railroad);
   const error = useSimulationStore((state) => state.error);
   const current = useSimulationStore((state) => state.current?.value);
+  const connection = useSimulationStore((state) => state.connection);
   const audioConnection = useSimulationStore((state) => state.audioConnection);
   const sensorReadings = useSimulationStore((state) => state.sensorReadings);
   const audioPrediction = useSimulationStore((state) => state.audioPrediction);
@@ -96,6 +97,29 @@ export default function SimulationApp() {
     socket.connect();
     return () => socket.close();
   }, []);
+
+  // REST polling fallback: when the live socket is blocked (content blocker,
+  // proxy, stalled TLS), the same snapshot is polled over plain HTTPS so the
+  // scene still tracks the shared clock. Commands use POST /api/command.
+  useEffect(() => {
+    if (connection === "connected") return;
+    const controller = new AbortController();
+    const poll = () => {
+      loadTrainSnapshot(controller.signal)
+        .then((snapshot) => {
+          if (snapshot) useSimulationStore.getState().pushState(snapshot);
+        })
+        .catch(() => {
+          // The socket retry loop already surfaces connection errors.
+        });
+    };
+    poll();
+    const timer = setInterval(poll, 1000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [connection]);
 
   useEffect(() => {
     if (!current || !railroad) return;

@@ -41,6 +41,7 @@ routez/
 **backend (railroad simulation service)**
 - FastAPI service for cached SCDOT railroad geometry, cached OpenStreetMap roads and declared level crossings, graph/route selection, shared coordinate conversion, and authoritative train motion.
 - Publishes geometry over HTTP and state at about 10 Hz over WebSocket, accepting play/pause/restart/playback-speed commands from any client.
+- Also accepts the same commands over `POST /api/command` (plain-HTTPS fallback for browsers that block the `wss://` upgrade) and serves the current snapshot at `GET /api/train` for 1 Hz polling fallback.
 - This service runs on port 8000. `simulation_backend` runs on port 8001 and consumes its clock indirectly through timestamped frontend audio chunks.
 - Also owns a separate headless offline dataset generator over the full connected railroad graph. Dataset generation must not start the live server or broadcast WebSocket state; keep observable Parquet inputs separate from hidden plans, branch/future labels, and replay metadata.
 - Provides a destination-blind rail pathfinder and offline evaluator. The baseline snaps position/heading/speed to the graph, emits probabilistic candidate paths, and reports held-out branch and 5/15/30-second position errors. Per-switch frequency priors may be selected only when validation results beat the heading baseline; destination, planned edges, and future labels are never inference inputs.

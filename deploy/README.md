@@ -40,6 +40,12 @@ curl https://routz-user.duckdns.org/health
 curl https://routz-acoustic.duckdns.org/health
 ```
 
+The 3D simulation frontend no longer hard-requires the rail WebSocket: it polls
+`GET /api/train` (1 Hz) and drives play/pause/restart/speed through
+`POST /api/command` whenever `wss://` is blocked (content blocker, proxy, or
+stalled TLS). The socket remains the low-latency path when it connects. After
+pulling backend changes, rebuild the VM image (`up --build -d rail-service`).
+
 Then set the Vercel env vars (`NEXT_PUBLIC_*` is compiled in at build time,
 so you must Redeploy after changing them):
 

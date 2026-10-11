@@ -5,7 +5,7 @@ import { type MutableRefObject, useEffect, useMemo, useRef, useState } from "rea
 import { createPleasantVoice, type PleasantVoice } from "@/lib/pleasantVoice";
 import { formatDistance } from "@/lib/simulation";
 import type { SimulationSocket } from "@/lib/websocket";
-import { getMixedContentHint, getSimulationWsUrl } from "@/lib/websocket";
+import { getMixedContentHint, getSimulationConnectionDetail, getSimulationWsUrl } from "@/lib/websocket";
 import { useSimulationStore } from "@/stores/simulationStore";
 
 export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<SimulationSocket | null> }) {
@@ -54,7 +54,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
   }, [current?.playback_speed, running, volume]);
 
   const toggleSimulation = () => {
-    socketRef.current?.send({ command: running ? "pause" : "play" });
+    void socketRef.current?.sendWithFallback({ command: running ? "pause" : "play" });
     const trainAudio = trainAudioRef.current;
     if (!trainAudio) return;
     if (running) trainAudio.pause();
@@ -62,7 +62,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
   };
 
   const restartSimulation = () => {
-    socketRef.current?.send({ command: "restart" });
+    void socketRef.current?.sendWithFallback({ command: "restart" });
     lastCueRef.current = null;
     if (trainAudioRef.current) {
       trainAudioRef.current.pause();
@@ -114,7 +114,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
       </div>
       <div className="progress-track"><span style={{ width: `${Math.min(100, progress)}%` }} /></div>
       <div className="button-row">
-        <button className="primary-button" onClick={toggleSimulation} disabled={!current || connection !== "connected" || current.status === "completed"}>
+        <button className="primary-button" onClick={toggleSimulation} disabled={!current || current.status === "completed"} title={connection !== "connected" ? `Live socket ${connection}; commands go over REST fallback` : undefined}>
           {running ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />} {running ? "Pause" : current?.status === "completed" ? "Completed" : "Play"}
         </button>
         <button className="icon-button" aria-label="Restart simulation" title="Restart" onClick={restartSimulation}><RotateCcw size={18} /></button>
@@ -129,7 +129,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
           ? `Visible train: acoustic estimate · ${audioPrediction.status.replaceAll("_", " ")}`
           : current
             ? `Visible train: live simulation fallback · ${audioPrediction?.type === "ingest_error" ? "acoustic ingest error" : "acoustic warming up"}`
-            : `Visible train: waiting for simulation state (${connection} · ${getSimulationWsUrl()})`}
+            : `Visible train: waiting for simulation state (${connection} · ${getSimulationWsUrl()}${getSimulationConnectionDetail() ? ` · ${getSimulationConnectionDetail()}` : ""})`}
       </div>
       {!current && getMixedContentHint() && (
         <div className="estimate-note" style={{ fontSize: 12 }}>{getMixedContentHint()}</div>
@@ -140,7 +140,7 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
           <span>Train audio</span>
           <input aria-label="Train audio volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
         </label>
-        <label className="speed-control"><span>Playback speed</span><select value={current?.playback_speed ?? 1} onChange={(event) => socketRef.current?.send({ command: "set_playback_speed", value: Number(event.target.value) })}>{[0.5, 1, 2, 4, 8].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}</select></label>
+        <label className="speed-control"><span>Playback speed</span><select value={current?.playback_speed ?? 1} onChange={(event) => { void socketRef.current?.sendWithFallback({ command: "set_playback_speed", value: Number(event.target.value) }); }}>{[0.5, 1, 2, 4, 8].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}</select></label>
       </div>
     </section>
   );

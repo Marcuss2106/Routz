@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
@@ -37,7 +37,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_origins),
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -62,6 +62,21 @@ async def railroad() -> dict:
 
 @app.get("/api/train")
 async def train() -> dict:
+    return await simulation.snapshot()
+
+
+@app.post("/api/command")
+async def command(message: dict) -> dict:
+    """REST fallback for the WebSocket play/pause/restart commands.
+
+    Lets the simulation frontend drive the shared clock over plain HTTPS when
+    the browser blocks the wss:// upgrade (content blocker, proxy, or stalled
+    TLS). Returns the fresh snapshot so polling clients stay in sync.
+    """
+    try:
+        await simulation.command(message)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return await simulation.snapshot()
 
 
