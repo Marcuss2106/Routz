@@ -31,7 +31,9 @@ class Settings:
                 f"AUDIO_SAMPLE_RATE_HZ must be {SAMPLE_RATE_HZ} for the locked demo contract"
             )
         return cls(
-            allowed_origins=[origin.strip() for origin in origins.split(",") if origin.strip()],
+            allowed_origins=[
+                origin.strip().rstrip("/") for origin in origins.split(",") if origin.strip()
+            ],
             predictions_url=os.getenv("USER_BACKEND_PREDICTIONS_URL", ""),
             internal_api_token=os.getenv("INTERNAL_API_TOKEN", ""),
             sample_rate_hz=sample_rate_hz,

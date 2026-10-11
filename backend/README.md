@@ -1,6 +1,6 @@
 ## Railroad simulation backend
 
-This FastAPI service owns the authoritative Columbia train clock and motion state. It is separate from `simulation_backend/`, which remains the audio-localization prototype.
+This FastAPI service owns the authoritative Columbia train clock and motion state. It is separate from `simulation_backend/`, which remains the audio-localization prototype, and from the user voice API in `backend.user_api`.
 
 ### Start locally
 
@@ -10,6 +10,8 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 PYTHONPATH=src .venv/bin/uvicorn backend.main:app --reload --port 8000
 ```
+
+`uv run backend` starts the same railroad app on port 8000.
 
 Normal startup reads the committed rail and road caches in `src/backend/data/` and makes no external request. Optional settings are documented in `.env.example`.
 
@@ -52,6 +54,21 @@ The graph joins only source feature endpoints within 2.5 m and never creates a n
 
 Rail source: SCDOT `Railroads_RO/MapServer/12`, owned by the South Carolina Department of Traffic Engineering and SCDOT GIS Office. Road and declared level-crossing source: OpenStreetMap contributors via Overpass API. Both caches were retrieved October 10, 2026; exact retrieval/filter/CRS details are embedded in their top-level `metadata` objects.
 
+## User voice API
+
+Accepts simulated crossing predictions, broadcasts a spoken alert when the situation changes, and serves that audio from ElevenLabs. This process is separate from the railroad app so the two do not share a port.
+
+```bash
+cd backend
+uv run user-backend
+```
+
+The server listens on port `8002` (`USER_BACKEND_PORT`). `GET /health` reports whether a real ElevenLabs key is configured. Placeholder values from `.env.example` count as unset.
+
+`POST /api/voice/transcribe` accepts a short recording and returns a start and destination. `POST /api/voice/route` stores the spoken summary of a route the map already calculated. The map requests `GET /api/speech/{alert_id}` and only receives audio for a sentence this service already composed.
+
+`POST /api/predictions` expects `Authorization: Bearer <INTERNAL_API_TOKEN>` and the crossing-prediction JSON from the simulation backend. A repeated situation is accepted and not spoken again. A duplicate or older `sequence` returns 409. `{"type":"simulation_reset","simulation_id":"..."}` clears that run.
+
 ### Tests
 
 ```bash
@@ -59,7 +76,7 @@ Rail source: SCDOT `Railroads_RO/MapServer/12`, owned by the South Carolina Depa
 PYTHONPATH=src .venv/bin/python -m pytest -q
 ```
 
-Tests cover coordinate round trips, connected route continuity, shared road/crossing alignment, whole-train placement, and play/pause/restart behavior.
+Tests cover coordinate round trips, connected route continuity, shared road/crossing alignment, whole-train placement, play/pause/restart behavior, the voice API, and offline dataset generation/replay reconstruction.
 
 ### Offline dataset generation
 

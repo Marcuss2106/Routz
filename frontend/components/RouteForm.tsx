@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   MOCK_SUGGESTIONS,
+  geocodeAddress,
   getGoogleMapsApiKey,
   searchPlaces,
   type PlaceResult,
@@ -13,7 +14,10 @@ interface RouteFormProps {
   destination: PlaceResult | null;
   onOriginChange: (place: PlaceResult | null) => void;
   onDestinationChange: (place: PlaceResult | null) => void;
-  onGetRoute: () => void;
+  onGetRoute: (overrides?: {
+    origin?: PlaceResult | null;
+    destination?: PlaceResult | null;
+  }) => void;
   onUseMyLocation: () => void;
   isLoading: boolean;
   isLocating: boolean;
@@ -59,6 +63,7 @@ export default function RouteForm({
   const [activeField, setActiveField] = useState<Field | null>(null);
   const [searchingField, setSearchingField] = useState<Field | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -172,13 +177,76 @@ export default function RouteForm({
     runSearch(field, value);
   }
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setActiveField(null);
-    onGetRoute();
+  /** Resolve typed-but-unselected text into a routable place. */
+  async function resolveTypedQuery(
+    field: Field,
+    query: string,
+    cached: PlaceResult[]
+  ): Promise<PlaceResult | null> {
+    const selected = field === "origin" ? origin : destination;
+    if (selected) return selected;
+    if (query.trim().length < 3) return null;
+    // Prefer a visible suggestion (already resolved with Place ref).
+    if (cached.length > 0) return cached[0];
+    const geocoded = await geocodeAddress(query);
+    return geocoded[0] ?? null;
   }
 
-  const canSubmit = origin !== null && destination !== null && !isLoading;
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setActiveField(null);
+    if (isLoading || isResolving) return;
+
+    // Enter-to-submit with raw typed addresses: resolve each side that has
+    // text but no selected suggestion (e.g. exact street addresses).
+    let resolvedOrigin = origin;
+    let resolvedDestination = destination;
+    if (!resolvedOrigin || !resolvedDestination) {
+      setIsResolving(true);
+      setSearchError(null);
+      try {
+        if (!resolvedOrigin && originQuery.trim().length >= 3) {
+          resolvedOrigin = await resolveTypedQuery(
+            "origin",
+            originQuery,
+            originResults
+          );
+          if (resolvedOrigin) {
+            onOriginChange(resolvedOrigin);
+            setPrevOriginId(resolvedOrigin.id);
+            setOriginQuery(resolvedOrigin.name);
+            setOriginResults([]);
+          }
+        }
+        if (!resolvedDestination && destinationQuery.trim().length >= 3) {
+          resolvedDestination = await resolveTypedQuery(
+            "destination",
+            destinationQuery,
+            destinationResults
+          );
+          if (resolvedDestination) {
+            onDestinationChange(resolvedDestination);
+            setPrevDestinationId(resolvedDestination.id);
+            setDestinationQuery(resolvedDestination.name);
+            setDestinationResults([]);
+          }
+        }
+      } catch {
+        setSearchError(
+          "Could not find that address. Try a more specific address."
+        );
+      } finally {
+        setIsResolving(false);
+      }
+    }
+    onGetRoute({ origin: resolvedOrigin, destination: resolvedDestination });
+  }
+
+  const canSubmit =
+    (origin !== null || originQuery.trim().length >= 3) &&
+    (destination !== null || destinationQuery.trim().length >= 3) &&
+    !isLoading &&
+    !isResolving;
   const activeResults =
     activeField === "origin"
       ? originResults
@@ -190,10 +258,13 @@ export default function RouteForm({
     (activeField === "origin" ? originQuery : destinationQuery).trim() === "";
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(11,27,51,0.12)]"
-    >
+    <form onSubmit={handleSubmit}>
+      <h1 className="text-[20px] font-bold leading-tight tracking-tight">
+        Where are you going?
+      </h1>
+      <p className="mt-0.5 mb-3 text-[13px] text-[#0B1B33]/55">
+        Pick a start and destination.
+      </p>
       <div className="relative flex flex-col gap-2">
         {/* Origin input */}
         <div className="relative">
@@ -320,7 +391,7 @@ export default function RouteForm({
             ) : searchError ? (
               <p className="px-4 py-3.5 text-sm text-[#B00020]">{searchError}</p>
             ) : activeResults.length > 0 ? (
-              <ul className="max-h-[240px] divide-y divide-black/[0.05] overflow-y-auto">
+              <ul className="max-h-[min(220px,28dvh)] divide-y divide-black/[0.05] overflow-y-auto">
                 {showingMocks && (
                   <li className="bg-[#F7F9FC] px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#0B1B33]/45">
                     Suggested places
@@ -390,6 +461,14 @@ export default function RouteForm({
               aria-hidden
             />
             Calculating route…
+          </>
+        ) : isResolving ? (
+          <>
+            <span
+              className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent"
+              aria-hidden
+            />
+            Finding address…
           </>
         ) : (
           <>

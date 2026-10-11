@@ -1,8 +1,8 @@
-# Routz — Frontend (v1)
+# Routz — Frontend (v2: crossing-aware routing)
 
-Mobile-friendly Next.js app that provides a polished **Google Maps driving-route experience**: search a starting location and destination, calculate a normal driving route with the Directions service, and view it on an interactive Google map.
+Mobile-friendly Next.js app that provides a polished **Google Maps driving-route experience** with **simulated train-crossing predictions**: search a starting location and destination, calculate driving candidates, overlay predicted railroad blockages, and auto-pick the route that avoids them.
 
-> **Scope for v1:** driving routes only. No train detection, railroad crossings, alerts, sensors, user accounts, databases, custom rerouting, or backend.
+> **SIMULATION — NOT FOR EMERGENCY USE.** Train observations, crossing locations, blockage windows, and time savings are simulated unless independently validated.
 
 ## Tech stack
 
@@ -12,12 +12,51 @@ Mobile-friendly Next.js app that provides a polished **Google Maps driving-route
 
 ## Project structure
 
-- `app/page.tsx` — page composition + route state
+- `app/page.tsx` — page composition + route state + crossing-aware scoring
 - `app/layout.tsx` — metadata, viewport, fonts
-- `components/GoogleMap.tsx` — initializes the Google map, markers, route polyline
+- `components/GoogleMap.tsx` — map, markers, route polyline, train/crossing overlays
 - `components/RouteForm.tsx` — origin/destination search + submit behavior
-- `components/RouteSummary.tsx` — bottom route summary card
+- `components/ActiveRoute.tsx` — navigation banner + crossing alerts
+- `components/TrainPanel.tsx` — demo ingestion: paste train observation JSON, see blockage predictions
 - `lib/googleMaps.ts` — Google Maps helpers, types, formatters, mock suggestions
+- `lib/trains.ts` — `TrainObservation` type + `predictCrossingBlockages()` (straight-line constant-velocity model)
+- `lib/crossings.ts` — real FRA inventory crossings (Columbia, SC, with DOT IDs)
+- `lib/routeCrossing.ts` — route-vs-blockage conflict detection + candidate scoring
+- `lib/trainStream.ts` — live backend link: POST observations + SSE subscription
+
+## Live backend (optional, recommended)
+
+The `backend/` FastAPI service computes predictions server-side and pushes
+them over SSE, so every client stays in sync:
+
+The map falls back to the same local math when `NEXT_PUBLIC_ROUTZ_API_URL` is unset. The railroad process on port 8000 does not serve that prediction stream. The user voice API on port 8002 is a different service.
+
+## Train observations (input contract)
+
+The inference team sends JSON like this (one observation per update):
+
+```json
+{
+  "trainId": "train-001",
+  "observedAt": "2026-10-10T20:45:00Z",
+  "lat": 33.9929,
+  "lon": -81.0158,
+  "speedMps": 12,
+  "lengthM": 1200,
+  "degFromEast": 109,
+  "positionReference": "front"
+}
+```
+
+(The sample sits ~800 m south of Greene St on the real NS downtown
+corridor, heading 109° — the track's actual line. The inference team's
+`lat`/`lon`/`degFromEast` values will differ per observation.)
+
+- `degFromEast`: math convention, counter-clockwise from east — `0` = east, `90` = north, `180` = west, `270` = south.
+- `positionReference`: which point of the train `lat`/`lon` refers to (`front` | `center` | `rear`).
+- `observedAt`: ISO-8601 UTC. Stale observations (>~90s old) produce stale predictions — the demo warns about this.
+
+Paste an observation into the **Train crossings** panel (below the route form) or tap **Sample** to load a live one. Routz predicts per-road `blockStartUtc`/`blockEndUtc` windows, draws them on the map, checks each Google route candidate against them, and picks the fastest non-blocked option. If all candidates are blocked, it shows the expected wait instead of pretending to reroute.
 
 ## Prerequisites
 
@@ -88,11 +127,23 @@ When an input is focused but empty, the app shows a few mock Columbia, SC sugges
 ## Troubleshooting
 
 - **"Google Maps rejected this API key"** — check that billing is enabled, all four APIs are enabled, and your HTTP-referrer restrictions include the exact URL you're visiting (scheme + host + port).
-- **Search returns nothing** — confirm **Places API (New)** is enabled on the project.
+- **Search returns nothing** — confirm **Places API (New)** and **Geocoding API** are enabled on the project (search falls back to geocoding for bare street addresses like `2435 Forest Dr, Columbia, SC 29204`). You can also type the full address and press Enter — the form geocodes it directly.
 - **No route found / legacy API error** — confirm **Routes API** (not the legacy Directions API) is enabled on the project, and try more specific addresses.
-- **Geolocation fails** — location requires HTTPS (or `localhost`) plus browser permission.
+- **Geolocation fails** — location requires HTTPS (or `localhost`) plus browser permission. Say route and Use my location then use a simulated start at Swearingen Engineering Center.
+
+## Simulated voice guidance
+
+Optional. Route search still runs in the browser if the voice backend is down.
+
+1. Copy `backend/.env.example` to `backend/.env` and set `ELEVENLABS_API_KEY` (and the same `INTERNAL_API_TOKEN` the simulation backend uses).
+2. From `backend/`, run `uv run user-backend` (port 8002). `uv run backend` is the railroad clock on port 8000.
+3. Tap **Voice** in the map header. That tap unlocks audio and speaks a short simulated line. Later crossing alerts are spoken only when a new alert arrives.
+4. Tap **Say route**, then say a start and a destination, such as “from Main Street to the hospital.” Tap **Listening** to send it, or wait eight seconds. The map draws that driving route and speaks the time and distance. “Take me to …” starts from the browser’s location. If that fix is unavailable, the start is a simulated point at Swearingen Engineering Center, 301 Main St, Columbia, SC.
+
+The page is labeled **SIMULATION / NOT FOR EMERGENCY USE**.
 
 ## Notes
 
-- No backend in v1 — everything runs client-side via the Maps JavaScript API.
+- Driving routes are still requested from Google in the browser.
+- Spoken alerts come from `backend/` (`GET /api/speech/{alert_id}`). The ElevenLabs key stays there.
 - Watch usage in **Google Cloud Console → Billing**; set budget alerts if you share the app publicly.

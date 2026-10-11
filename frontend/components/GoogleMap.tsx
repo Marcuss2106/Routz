@@ -9,12 +9,21 @@ import {
   type PlaceResult,
   type RoutzCoordinate,
 } from "@/lib/googleMaps";
+import { trainEndpoints, type BlockagePrediction, type TrainObservation } from "@/lib/trains";
 
 interface GoogleMapProps {
   origin: PlaceResult | null;
   destination: PlaceResult | null;
   routePath: RoutzCoordinate[] | null;
+  /** Alternate candidates (drawn faint) when crossing-aware routing found options. */
+  altPaths?: RoutzCoordinate[][] | null;
+  train?: TrainObservation | null;
+  predictions?: BlockagePrediction[] | null;
   isCalculating?: boolean;
+  /** Pixels to keep clear above the bottom sheet when fitting the route. */
+  bottomInset?: number;
+  /** Pixels to keep clear below the top banner when fitting the route. */
+  topInset?: number;
 }
 
 const ORIGIN_COLOR = "#007AFF";
@@ -31,15 +40,54 @@ function pinIcon(color: string, letter: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+/** Small crossing badge: colored dot with railroad glyph, as a data URL. */
+function crossingIcon(color: string): string {
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>` +
+    `<circle cx='15' cy='15' r='13' fill='${color}' stroke='white' stroke-width='3'/>` +
+    `<text x='15' y='20.5' text-anchor='middle' font-family='Arial, sans-serif' font-size='13' font-weight='bold' fill='white'>✕</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+/** Train front marker, as a data URL. */
+function trainIcon(): string {
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>` +
+    `<rect x='2' y='2' width='30' height='30' rx='8' fill='#0B1B33' stroke='white' stroke-width='3'/>` +
+    `<text x='17' y='22.5' text-anchor='middle' font-family='Arial, sans-serif' font-size='15'>🚂</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function crossingColor(status: BlockagePrediction["status"]): string | null {
+  switch (status) {
+    case "blocked_now":
+    case "stopped_on_crossing":
+      return "#B00020";
+    case "blocked_soon":
+      return "#E65100";
+    case "upcoming":
+      return "#007AFF";
+    default:
+      return null;
+  }
+}
+
 /**
  * Initializes the Google map, renders origin/destination markers,
- * and draws the active driving-route polyline.
+ * the active driving-route polyline, and simulated train/crossing overlays.
  */
 export default function GoogleMap({
   origin,
   destination,
   routePath,
+  altPaths = null,
+  train = null,
+  predictions = null,
   isCalculating = false,
+  bottomInset = 300,
+  topInset = 88,
 }: GoogleMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -81,6 +129,8 @@ export default function GoogleMap({
           streetViewControl: false,
           fullscreenControl: false,
           zoomControl: false,
+          cameraControl: false,
+          rotateControl: false,
           // The page itself doesn't scroll, so single-finger gestures are safe.
           gestureHandling: "greedy",
         });
@@ -129,8 +179,13 @@ export default function GoogleMap({
     overlaysRef.current = [];
 
     try {
-      const bounds = new maps.LatLngBounds();
-      let hasPoints = false;
+      // Route points drive the camera with sheet-aware insets. Train/crossing
+      // overlays get their own modest framing and never fight the sheet:
+      // fitting them with a ~700px bottom inset degenerates the zoom.
+      const routeBounds = new maps.LatLngBounds();
+      const trainBounds = new maps.LatLngBounds();
+      let hasRoutePoints = false;
+      let hasTrainPoints = false;
 
       const addMarker = (place: PlaceResult, color: string, letter: string) => {
         const position = {
@@ -147,8 +202,8 @@ export default function GoogleMap({
           },
         });
         overlaysRef.current.push(marker);
-        bounds.extend(position);
-        hasPoints = true;
+        routeBounds.extend(position);
+        hasRoutePoints = true;
       };
 
       if (origin) addMarker(origin, ORIGIN_COLOR, "A");
@@ -157,7 +212,7 @@ export default function GoogleMap({
       if (routePath && routePath.length > 1) {
         const path = routePath.map((p) => {
           const point = { lat: p.latitude, lng: p.longitude };
-          bounds.extend(point);
+          routeBounds.extend(point);
           return point;
         });
         const polyline = new maps.Polyline({
@@ -169,21 +224,90 @@ export default function GoogleMap({
         });
         polyline.setMap(map);
         overlaysRef.current.push(polyline);
-        hasPoints = true;
+        hasRoutePoints = true;
       }
 
-      if (hasPoints) {
-        map.fitBounds(bounds, {
-          top: 190,
+      // Alternate candidates, drawn faint underneath the chosen route.
+      if (altPaths) {
+        for (const alt of altPaths) {
+          if (!alt || alt.length < 2) continue;
+          const path = alt.map((p) => ({ lat: p.latitude, lng: p.longitude }));
+          const polyline = new maps.Polyline({
+            path,
+            geodesic: true,
+            strokeColor: "#0B1B33",
+            strokeOpacity: 0.25,
+            strokeWeight: 4,
+          });
+          polyline.setMap(map);
+          overlaysRef.current.push(polyline);
+        }
+      }
+
+      // Simulated train: front marker + body line to rear.
+      if (train) {
+        try {
+          const { front, rear } = trainEndpoints(train);
+          const frontPos = { lat: front.lat, lng: front.lon };
+          const marker = new maps.Marker({
+            position: frontPos,
+            map,
+            title: `Simulated train ${train.trainId}`,
+            icon: { url: trainIcon(), scaledSize: new maps.Size(34, 34) },
+          });
+          overlaysRef.current.push(marker);
+          const body = new maps.Polyline({
+            path: [frontPos, { lat: rear.lat, lng: rear.lon }],
+            geodesic: true,
+            strokeColor: "#0B1B33",
+            strokeOpacity: 0.9,
+            strokeWeight: 6,
+          });
+          body.setMap(map);
+          overlaysRef.current.push(body);
+          trainBounds.extend(frontPos);
+          trainBounds.extend({ lat: rear.lat, lng: rear.lon });
+          hasTrainPoints = true;
+        } catch {
+          // Train overlay is best-effort.
+        }
+      }
+
+      // Simulated crossing predictions.
+      if (predictions) {
+        for (const p of predictions) {
+          const color = crossingColor(p.status);
+          if (!color) continue;
+          const position = { lat: p.latitude, lng: p.longitude };
+          const marker = new maps.Marker({
+            position,
+            map,
+            title: `Simulated: ${p.roadName} — ${p.status.replaceAll("_", " ")}`,
+            icon: { url: crossingIcon(color), scaledSize: new maps.Size(30, 30) },
+          });
+          overlaysRef.current.push(marker);
+          trainBounds.extend(position);
+          hasTrainPoints = true;
+        }
+      }
+
+      if (hasRoutePoints) {
+        map.fitBounds(routeBounds, {
+          top: topInset,
           right: 44,
-          bottom: routePath && routePath.length > 1 ? 320 : 240,
+          bottom: bottomInset,
           left: 44,
         });
+      } else if (hasTrainPoints) {
+        // Train-only framing uses fixed modest padding — the bottom sheet
+        // height is unpredictable (expanded prediction lists) and huge
+        // insets collapse the viewport.
+        map.fitBounds(trainBounds, { top: 110, right: 60, bottom: 320, left: 60 });
       }
     } catch {
       // Rendering is best-effort; keep the base map usable.
     }
-  }, [origin, destination, routePath]);
+  }, [origin, destination, routePath, altPaths, train, predictions, bottomInset, topInset]);
 
   return (
     <div className="relative h-full w-full bg-[#E8EEF4]">
@@ -212,7 +336,7 @@ export default function GoogleMap({
 
       {/* Route-calculating indicator */}
       {!isLoading && !mapError && isCalculating && (
-        <div className="pointer-events-none absolute inset-x-0 top-44 z-10 flex justify-center px-4">
+        <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex justify-center px-4">
           <div className="flex items-center gap-2.5 rounded-full bg-[#0B1B33]/90 px-4 py-2.5 shadow-xl backdrop-blur">
             <span
               className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
