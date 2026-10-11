@@ -8,7 +8,13 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { parseTrainObservation, type BlockagePrediction, type TrainObservation } from "./trains";
+import type { Crossing } from "./crossings";
+import {
+  parseTrainObservation,
+  type BlockagePrediction,
+  type RailRoutePoint,
+  type TrainObservation,
+} from "./trains";
 
 export type LiveStatus = "disabled" | "connecting" | "connected" | "offline";
 
@@ -77,6 +83,34 @@ export interface PredictionEnvelope {
   stale: boolean;
 }
 
+export type SimulationTrainStatus = "running" | "paused" | "completed";
+
+export interface SimulationVehiclePosition {
+  id: string;
+  distance_m: number;
+  latitude: number;
+  longitude: number;
+  heading_deg: number;
+}
+
+/** Exact display state published by the railroad simulator on port 8000. */
+export interface SimulationTrainState {
+  type: "train_state";
+  train_id: string;
+  sequence: number;
+  simulation_time_s: number;
+  status: SimulationTrainStatus;
+  route_id: string;
+  distance_along_route_m: number;
+  speed_mps: number;
+  playback_speed: number;
+  latitude: number;
+  longitude: number;
+  heading_deg: number;
+  train_length_m: number;
+  vehicles: SimulationVehiclePosition[];
+}
+
 /** Backend base URL. Empty = live mode disabled. */
 export function getRoutzApiUrl(): string {
   return (
@@ -92,6 +126,84 @@ export function getRoutzWsUrl(): string {
   const api = getRoutzApiUrl();
   if (!api) return "";
   return api.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:") + "/ws/updates";
+}
+
+/** Railroad clock API. It is separate from the acoustic/user API on port 8002. */
+export function getSimulationApiUrl(): string {
+  return (process.env.NEXT_PUBLIC_SIMULATION_API_URL ?? "http://localhost:8000")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+export function getSimulationWsUrl(): string {
+  const configured = (process.env.NEXT_PUBLIC_SIMULATION_WS_URL ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (configured) return configured;
+  return getSimulationApiUrl()
+    .replace(/^http:/i, "ws:")
+    .replace(/^https:/i, "wss:") + "/ws/simulation";
+}
+
+function finiteNumber(value: unknown, field: string): number {
+  const result = Number(value);
+  if (!Number.isFinite(result)) throw new Error(`Simulation train has invalid ${field}.`);
+  return result;
+}
+
+/** Validate the railroad simulator's canonical train_state event. */
+export function parseSimulationTrainState(raw: unknown): SimulationTrainState {
+  if (typeof raw !== "object" || raw === null) throw new Error("Simulation train must be an object.");
+  const event = raw as Record<string, unknown>;
+  if (event.type !== "train_state") throw new Error("Unsupported simulation event.");
+  const status = String(event.status ?? "");
+  if (status !== "running" && status !== "paused" && status !== "completed") {
+    throw new Error("Simulation train has invalid status.");
+  }
+  const trainId = String(event.train_id ?? "").trim();
+  if (!trainId) throw new Error("Simulation train is missing train_id.");
+  const vehicles = Array.isArray(event.vehicles)
+    ? event.vehicles.map((item) => {
+        const vehicle = item as Record<string, unknown>;
+        return {
+          id: String(vehicle.id ?? "vehicle"),
+          distance_m: finiteNumber(vehicle.distance_m, "vehicle distance"),
+          latitude: finiteNumber(vehicle.latitude, "vehicle latitude"),
+          longitude: finiteNumber(vehicle.longitude, "vehicle longitude"),
+          heading_deg: finiteNumber(vehicle.heading_deg, "vehicle heading"),
+        };
+      })
+    : [];
+  return {
+    type: "train_state",
+    train_id: trainId,
+    sequence: finiteNumber(event.sequence, "sequence"),
+    simulation_time_s: finiteNumber(event.simulation_time_s, "simulation_time_s"),
+    status,
+    route_id: String(event.route_id ?? ""),
+    distance_along_route_m: finiteNumber(event.distance_along_route_m, "distance_along_route_m"),
+    speed_mps: Math.max(0, finiteNumber(event.speed_mps, "speed_mps")),
+    playback_speed: Math.max(0, finiteNumber(event.playback_speed ?? 1, "playback_speed")),
+    latitude: finiteNumber(event.latitude, "latitude"),
+    longitude: finiteNumber(event.longitude, "longitude"),
+    heading_deg: finiteNumber(event.heading_deg, "heading_deg"),
+    train_length_m: Math.max(1, finiteNumber(event.train_length_m, "train_length_m")),
+    vehicles,
+  };
+}
+
+/** Convert compass heading (clockwise from north) to the map model's CCW-from-east heading. */
+export function simulationStateToObservation(state: SimulationTrainState): TrainObservation {
+  return parseTrainObservation({
+    trainId: state.train_id,
+    observedAt: new Date().toISOString(),
+    lat: state.latitude,
+    lon: state.longitude,
+    speedMps: state.status === "running" ? state.speed_mps * state.playback_speed : 0,
+    lengthM: state.train_length_m,
+    degFromEast: 90 - state.heading_deg,
+    positionReference: "front",
+  });
 }
 
 function parsePredictions(raw: unknown, fallbackTrainId: string, fallbackObservedAt: string): BlockagePrediction[] {
@@ -293,6 +405,138 @@ export function useTrainStream(onEstimate: (event: TrainStateEstimateEvent | nul
           handlerRef.current(parseTrainStateEstimate(raw));
         } catch {
           // Ignore malformed events; the reconnect snapshot resynchronizes state.
+        }
+      };
+      socket.onerror = () => setStatus("offline");
+      socket.onclose = () => {
+        if (stopped) return;
+        setStatus("offline");
+        reconnectTimer = setTimeout(connect, 1500);
+      };
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, []);
+
+  return status;
+}
+
+/**
+ * Subscribe directly to the real railroad simulation clock.
+ *
+ * A REST snapshot is loaded first so a paused/completed train is visible even
+ * before the WebSocket connects. Disconnects deliberately retain the last
+ * valid state instead of making a stationary train disappear.
+ */
+export function useSimulationTrainStream(
+  onState: (state: SimulationTrainState) => void,
+  onCrossings?: (crossings: Crossing[]) => void,
+  onRoute?: (route: RailRoutePoint[]) => void
+): LiveStatus {
+  const [status, setStatus] = useState<LiveStatus>("connecting");
+  const handlerRef = useRef(onState);
+  const crossingsHandlerRef = useRef(onCrossings);
+  const routeHandlerRef = useRef(onRoute);
+  useEffect(() => {
+    handlerRef.current = onState;
+  }, [onState]);
+  useEffect(() => {
+    crossingsHandlerRef.current = onCrossings;
+  }, [onCrossings]);
+  useEffect(() => {
+    routeHandlerRef.current = onRoute;
+  }, [onRoute]);
+
+  useEffect(() => {
+    const apiUrl = getSimulationApiUrl();
+    const wsUrl = getSimulationWsUrl();
+    let socket: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const accept = (raw: unknown) => {
+      try {
+        handlerRef.current(parseSimulationTrainState(raw));
+      } catch {
+        // A later valid snapshot will resynchronize the display.
+      }
+    };
+
+    void fetch(`${apiUrl}/api/train`, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((raw) => {
+        if (!stopped) accept(raw);
+      })
+      .catch(() => {
+        if (!stopped) setStatus("offline");
+      });
+
+    void fetch(`${apiUrl}/api/railroad`, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((raw) => {
+        if (stopped || typeof raw !== "object" || raw === null) return;
+        const railroad = raw as Record<string, unknown>;
+        const route = railroad.route;
+        if (typeof route === "object" && route !== null) {
+          const routePoints = (route as Record<string, unknown>).points_wgs84;
+          if (Array.isArray(routePoints)) {
+            const parsedRoute = routePoints.flatMap((item): RailRoutePoint[] => {
+              if (typeof item !== "object" || item === null) return [];
+              const point = item as Record<string, unknown>;
+              const latitude = Number(point.latitude);
+              const longitude = Number(point.longitude);
+              return Number.isFinite(latitude) && Number.isFinite(longitude)
+                ? [{ latitude, longitude }]
+                : [];
+            });
+            if (parsedRoute.length > 1) routeHandlerRef.current?.(parsedRoute);
+          }
+        }
+        const values = railroad.crossings;
+        if (!Array.isArray(values)) return;
+        const crossings = values.flatMap((item): Crossing[] => {
+          if (typeof item !== "object" || item === null) return [];
+          const crossing = item as Record<string, unknown>;
+          const latitude = Number(crossing.latitude);
+          const longitude = Number(crossing.longitude);
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+          const id = String(crossing.id ?? `${latitude},${longitude}`);
+          return [{
+            id,
+            dotId: id,
+            roadName: String(crossing.name ?? "Rail crossing"),
+            latitude,
+            longitude,
+            railroad: "Simulation railroad network",
+          }];
+        });
+        if (crossings.length > 0) crossingsHandlerRef.current?.(crossings);
+      })
+      .catch(() => {
+        // The curated crossing list remains available when network metadata fails.
+      });
+
+    const connect = () => {
+      if (stopped || typeof WebSocket === "undefined") return;
+      setStatus("connecting");
+      socket = new WebSocket(wsUrl);
+      socket.onopen = () => setStatus("connected");
+      socket.onmessage = (message) => {
+        try {
+          accept(JSON.parse(String(message.data)));
+        } catch {
+          // Ignore malformed JSON and retain the last good train position.
         }
       };
       socket.onerror = () => setStatus("offline");

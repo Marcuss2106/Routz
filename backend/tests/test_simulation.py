@@ -27,10 +27,12 @@ def test_coordinate_round_trip():
 
 def test_route_is_continuous_and_substantial():
     coordinates, network = make_network()
+    assert network.route_start_wgs == (-81.03356685254148, 33.98900940070297)
+    assert network.route_end_wgs == (-81.02215337406, 33.99365015767137)
     start = coordinates.wgs_to_utm(*network.route_start_wgs)
     end = coordinates.wgs_to_utm(*network.route_end_wgs)
-    assert 1000 < network.route_length_m < 1150
-    assert math.dist(network.route_points_utm[0], start) < 5
+    assert 1180 < network.route_length_m < 1200
+    assert math.dist(network.route_points_utm[0], start) < 0.01
     assert math.dist(network.route_points_utm[-1], end) < 2
     for left, right in zip(network.route_edges, network.route_edges[1:]):
         assert set((network.edges[left].start, network.edges[left].end)) & set(
@@ -38,6 +40,10 @@ def test_route_is_continuous_and_substantial():
         )
 
     payload = network.payload()
+    route_wgs84 = payload["route"]["points_wgs84"]
+    assert len(route_wgs84) == len(network.route_points_utm)
+    assert math.isclose(route_wgs84[0]["latitude"], 33.98900940070297, abs_tol=1e-9)
+    assert math.isclose(route_wgs84[0]["longitude"], -81.03356685254148, abs_tol=1e-9)
     assert payload["landmarks"][0]["name"] == "USC College of Engineering and Computing"
     assert math.isfinite(payload["landmarks"][0]["rotation_y_rad"])
     assert len(payload["audio_trackers"]) == 3

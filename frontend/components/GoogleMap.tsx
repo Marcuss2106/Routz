@@ -9,17 +9,24 @@ import {
   type PlaceResult,
   type RoutzCoordinate,
 } from "@/lib/googleMaps";
-import { offsetLatLon, trainEndpoints, type BlockagePrediction, type TrainObservation } from "@/lib/trains";
-import type { TrainStateEstimateEvent } from "@/lib/trainStream";
+import {
+  haversineM,
+  offsetLatLon,
+  trainEndpoints,
+  type BlockagePrediction,
+  type RailRoutePoint,
+  type TrainObservation,
+} from "@/lib/trains";
+import type { SimulationTrainState, TrainStateEstimateEvent } from "@/lib/trainStream";
 
 interface GoogleMapProps {
   origin: PlaceResult | null;
   destination: PlaceResult | null;
   routePath: RoutzCoordinate[] | null;
-  /** Alternate candidates (drawn faint) when crossing-aware routing found options. */
-  altPaths?: RoutzCoordinate[][] | null;
   train?: TrainObservation | null;
   estimate?: TrainStateEstimateEvent | null;
+  simulationTrain?: SimulationTrainState | null;
+  simulationRailRoute?: RailRoutePoint[];
   predictions?: BlockagePrediction[] | null;
   isCalculating?: boolean;
   /** Pixels to keep clear above the bottom sheet when fitting the route. */
@@ -28,9 +35,51 @@ interface GoogleMapProps {
   topInset?: number;
 }
 
-const ORIGIN_COLOR = "#007AFF";
+const ORIGIN_COLOR = "#A65353";
 const DESTINATION_COLOR = "#0B1B33";
-const ROUTE_COLOR = "#007AFF";
+const ROUTE_COLOR = "#A65353";
+
+/** Trace the visible consist over every saved rail vertex instead of cutting curved track corners. */
+function trainPathOnRoute(
+  route: RailRoutePoint[],
+  frontDistanceM: number,
+  trainLengthM: number
+): Array<{ lat: number; lng: number }> {
+  if (route.length < 2) return [];
+  const cumulative = [0];
+  for (let index = 1; index < route.length; index++) {
+    cumulative.push(cumulative[index - 1] + haversineM(
+      route[index - 1].latitude,
+      route[index - 1].longitude,
+      route[index].latitude,
+      route[index].longitude
+    ));
+  }
+  const routeLengthM = cumulative[cumulative.length - 1];
+  const frontM = Math.max(0, Math.min(frontDistanceM, routeLengthM));
+  const rearM = Math.max(0, frontM - trainLengthM);
+
+  const pointAt = (distanceM: number) => {
+    let index = 1;
+    while (index < cumulative.length - 1 && cumulative[index] < distanceM) index++;
+    const startM = cumulative[index - 1];
+    const segmentM = cumulative[index] - startM;
+    const fraction = segmentM <= 0 ? 0 : (distanceM - startM) / segmentM;
+    return {
+      lat: route[index - 1].latitude + (route[index].latitude - route[index - 1].latitude) * fraction,
+      lng: route[index - 1].longitude + (route[index].longitude - route[index - 1].longitude) * fraction,
+    };
+  };
+
+  const path = [pointAt(frontM)];
+  for (let index = route.length - 2; index > 0; index--) {
+    if (cumulative[index] < frontM && cumulative[index] > rearM) {
+      path.push({ lat: route[index].latitude, lng: route[index].longitude });
+    }
+  }
+  path.push(pointAt(rearM));
+  return path;
+}
 
 /** Brand-colored map pin with a letter, as a data URL. */
 function pinIcon(color: string, letter: string): string {
@@ -52,12 +101,15 @@ function crossingIcon(color: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-/** Train front marker, as a data URL. */
-function trainIcon(color = "#0B1B33"): string {
+/** Top-down locomotive marker. SVG points north, then rotates to its compass heading. */
+function trainIcon(color = "#D32F2F", headingDeg = 0): string {
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>` +
-    `<rect x='2' y='2' width='30' height='30' rx='8' fill='${color}' stroke='white' stroke-width='3'/>` +
-    `<text x='17' y='22.5' text-anchor='middle' font-family='Arial, sans-serif' font-size='15'>🚂</text>` +
+    `<g transform='rotate(${headingDeg.toFixed(1)} 17 17)'>` +
+    `<path d='M17 2 25 8v20c0 2.2-1.8 4-4 4h-8c-2.2 0-4-1.8-4-4V8l8-6Z' fill='${color}' stroke='white' stroke-width='2.5'/>` +
+    `<rect x='12' y='9' width='10' height='7' rx='2' fill='#F7D9D9'/>` +
+    `<path d='M12 22h10M13 27h8' stroke='#7F1D1D' stroke-width='2' stroke-linecap='round'/>` +
+    `</g>` +
     `</svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
@@ -70,7 +122,7 @@ function crossingColor(status: BlockagePrediction["status"]): string | null {
     case "blocked_soon":
       return "#E65100";
     case "upcoming":
-      return "#007AFF";
+      return "#A65353";
     default:
       return null;
   }
@@ -84,9 +136,10 @@ export default function GoogleMap({
   origin,
   destination,
   routePath,
-  altPaths = null,
   train = null,
   estimate = null,
+  simulationTrain = null,
+  simulationRailRoute = [],
   predictions = null,
   isCalculating = false,
   bottomInset = 300,
@@ -96,12 +149,19 @@ export default function GoogleMap({
   const mapRef = useRef<any>(null);
   const mapsRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
+  const activeRoutePolylineRef = useRef<any>(null);
+  const predictionOverlaysRef = useRef<Map<string, any>>(new Map());
+  const trainMarkerRef = useRef<any>(null);
+  const trainBodyRef = useRef<any>(null);
+  const framedTrainRef = useRef(false);
+  const framedRouteKeyRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [mapError, setMapError] = useState<string | null>(null);
 
   // Initialize the map once.
   useEffect(() => {
     let cancelled = false;
+    const predictionOverlays = predictionOverlaysRef.current;
 
     async function init() {
       const container = containerRef.current;
@@ -162,11 +222,20 @@ export default function GoogleMap({
         }
       }
       overlaysRef.current = [];
+      activeRoutePolylineRef.current?.setMap?.(null);
+      activeRoutePolylineRef.current = null;
+      for (const overlay of predictionOverlays.values()) overlay?.setMap?.(null);
+      predictionOverlays.clear();
+      trainMarkerRef.current?.setMap?.(null);
+      trainBodyRef.current?.setMap?.(null);
+      trainMarkerRef.current = null;
+      trainBodyRef.current = null;
       mapRef.current = null;
     };
   }, []);
 
-  // Sync markers + route polyline whenever inputs change.
+  // Route overlays change infrequently. Keeping these separate from the live
+  // train prevents a 10 Hz train feed from rebuilding/flickering the route.
   useEffect(() => {
     const map = mapRef.current;
     const maps = mapsRef.current;
@@ -182,13 +251,8 @@ export default function GoogleMap({
     overlaysRef.current = [];
 
     try {
-      // Route points drive the camera with sheet-aware insets. Train/crossing
-      // overlays get their own modest framing and never fight the sheet:
-      // fitting them with a ~700px bottom inset degenerates the zoom.
       const routeBounds = new maps.LatLngBounds();
-      const trainBounds = new maps.LatLngBounds();
       let hasRoutePoints = false;
-      let hasTrainPoints = false;
 
       const addMarker = (place: PlaceResult, color: string, letter: string) => {
         const position = {
@@ -218,135 +282,189 @@ export default function GoogleMap({
           routeBounds.extend(point);
           return point;
         });
-        const polyline = new maps.Polyline({
+        if (!activeRoutePolylineRef.current) {
+          activeRoutePolylineRef.current = new maps.Polyline({ map });
+        }
+        activeRoutePolylineRef.current.setOptions({
           path,
           geodesic: true,
           strokeColor: ROUTE_COLOR,
           strokeOpacity: 1,
           strokeWeight: 5,
+          zIndex: 20,
+          map,
         });
-        polyline.setMap(map);
-        overlaysRef.current.push(polyline);
         hasRoutePoints = true;
+      } else {
+        activeRoutePolylineRef.current?.setMap?.(null);
+        activeRoutePolylineRef.current = null;
       }
 
-      // Alternate candidates, drawn faint underneath the chosen route.
-      if (altPaths) {
-        for (const alt of altPaths) {
-          if (!alt || alt.length < 2) continue;
-          const path = alt.map((p) => ({ lat: p.latitude, lng: p.longitude }));
-          const polyline = new maps.Polyline({
-            path,
-            geodesic: true,
-            strokeColor: "#0B1B33",
-            strokeOpacity: 0.25,
-            strokeWeight: 4,
-          });
-          polyline.setMap(map);
-          overlaysRef.current.push(polyline);
-        }
-      }
-
-      // Acoustic estimate: this is the detected train shown to the user. It is
-      // drawn from map_state, the estimate re-expressed on the demo corridor.
-      const mapState = estimate?.map_state ?? null;
-      if (estimate && mapState) {
-        try {
-          const length = mapState.length_m ?? mapState.provisional_length_m ?? 0;
-          const heading = (mapState.direction_deg_from_east ?? 0) * (Math.PI / 180);
-          const east = Math.cos(heading);
-          const north = Math.sin(heading);
-          // map_state reports the leading point; the body trails behind it.
-          const rear = offsetLatLon(mapState.latitude, mapState.longitude, -east * length, -north * length);
-          const frontPos = { lat: mapState.latitude, lng: mapState.longitude };
-          const marker = new maps.Marker({
-            position: frontPos,
-            map,
-            title: `Simulated acoustic estimate ${estimate.train_id} · ${estimate.status}${mapState.length_m === null && length > 0 ? " · length provisional" : ""}`,
-            icon: { url: trainIcon("#7C3AED"), scaledSize: new maps.Size(34, 34) },
-          });
-          overlaysRef.current.push(marker);
-          if (length > 0) {
-            const body = new maps.Polyline({
-              path: [frontPos, { lat: rear.lat, lng: rear.lon }],
-              geodesic: true,
-              strokeColor: "#7C3AED",
-              strokeOpacity: 0.9,
-              strokeWeight: 7,
-            });
-            body.setMap(map);
-            overlaysRef.current.push(body);
-            trainBounds.extend({ lat: rear.lat, lng: rear.lon });
-          }
-          trainBounds.extend(frontPos);
-          hasTrainPoints = true;
-        } catch {
-          // Acoustic overlay is best-effort.
-        }
-      } else if (train) {
-        // Manual compatibility observation: front marker + body line to rear.
-        try {
-          const { front, rear } = trainEndpoints(train);
-          const frontPos = { lat: front.lat, lng: front.lon };
-          const marker = new maps.Marker({
-            position: frontPos,
-            map,
-            title: `Manual train ${train.trainId}`,
-            icon: { url: trainIcon(), scaledSize: new maps.Size(34, 34) },
-          });
-          overlaysRef.current.push(marker);
-          const body = new maps.Polyline({
-            path: [frontPos, { lat: rear.lat, lng: rear.lon }],
-            geodesic: true,
-            strokeColor: "#0B1B33",
-            strokeOpacity: 0.9,
-            strokeWeight: 6,
-          });
-          body.setMap(map);
-          overlaysRef.current.push(body);
-          trainBounds.extend(frontPos);
-          trainBounds.extend({ lat: rear.lat, lng: rear.lon });
-          hasTrainPoints = true;
-        } catch {
-          // Train overlay is best-effort.
-        }
-      }
-
-      // Simulated crossing predictions.
-      if (predictions) {
-        for (const p of predictions) {
-          const color = crossingColor(p.status);
-          if (!color) continue;
-          const position = { lat: p.latitude, lng: p.longitude };
-          const marker = new maps.Marker({
-            position,
-            map,
-            title: `Simulated: ${p.roadName} — ${p.status.replaceAll("_", " ")}`,
-            icon: { url: crossingIcon(color), scaledSize: new maps.Size(30, 30) },
-          });
-          overlaysRef.current.push(marker);
-          trainBounds.extend(position);
-          hasTrainPoints = true;
-        }
-      }
-
-      if (hasRoutePoints) {
+      const routeFrameKey = routePath && origin && destination
+        ? `${origin.id}:${destination.id}`
+        : null;
+      if (hasRoutePoints && routeFrameKey && framedRouteKeyRef.current !== routeFrameKey) {
         map.fitBounds(routeBounds, {
           top: topInset,
           right: 44,
           bottom: bottomInset,
           left: 44,
         });
-      } else if (hasTrainPoints) {
-        // Train-only framing uses fixed modest padding — the bottom sheet
-        // height is unpredictable (expanded prediction lists) and huge
-        // insets collapse the viewport.
-        map.fitBounds(trainBounds, { top: 110, right: 60, bottom: 320, left: 60 });
+        framedRouteKeyRef.current = routeFrameKey;
+      } else if (!routePath) {
+        framedRouteKeyRef.current = null;
       }
     } catch {
       // Rendering is best-effort; keep the base map usable.
     }
-  }, [origin, destination, routePath, altPaths, train, estimate, predictions, bottomInset, topInset]);
+  }, [origin, destination, routePath, bottomInset, topInset, isLoading]);
+
+  // Crossing markers can update with predictions without moving the camera or
+  // touching the driving-route polylines.
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = mapsRef.current;
+    if (!map || !maps) return;
+    const visible = new Set<string>();
+    for (const prediction of predictions ?? []) {
+      const color = crossingColor(prediction.status);
+      if (!color) continue;
+      visible.add(prediction.crossingId);
+      let marker = predictionOverlaysRef.current.get(prediction.crossingId);
+      if (!marker) {
+        marker = new maps.Marker({ map });
+        predictionOverlaysRef.current.set(prediction.crossingId, marker);
+      }
+      const nextTitle = `Simulated: ${prediction.roadName} — ${prediction.status.replaceAll("_", " ")}`;
+      marker.setPosition({ lat: prediction.latitude, lng: prediction.longitude });
+      marker.setTitle(nextTitle);
+      if (marker.__routzStatus !== prediction.status) {
+        marker.setIcon({ url: crossingIcon(color), scaledSize: new maps.Size(30, 30) });
+        marker.__routzStatus = prediction.status;
+      }
+    }
+    for (const [crossingId, marker] of predictionOverlaysRef.current) {
+      if (visible.has(crossingId)) continue;
+      marker.setMap(null);
+      predictionOverlaysRef.current.delete(crossingId);
+    }
+  }, [predictions, isLoading]);
+
+  // Update the same marker/polyline objects in place for smooth train motion.
+  // The exact simulator vehicle points keep the body on curved track.
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = mapsRef.current;
+    if (!map || !maps) return;
+
+    let path: Array<{ lat: number; lng: number }> = [];
+    let title = "";
+    let color = "#0B1B33";
+    let markerHeadingDeg = 0;
+    if (simulationTrain && train) {
+      color = "#D32F2F";
+      markerHeadingDeg = simulationTrain.heading_deg;
+      const distinctVehicles = simulationTrain.vehicles.filter((vehicle, index, vehicles) => {
+        if (index === 0) return true;
+        const previous = vehicles[index - 1];
+        return Math.abs(vehicle.latitude - previous.latitude) > 1e-9 ||
+          Math.abs(vehicle.longitude - previous.longitude) > 1e-9;
+      });
+      const railPath = trainPathOnRoute(
+        simulationRailRoute,
+        simulationTrain.distance_along_route_m,
+        simulationTrain.train_length_m
+      );
+      path = railPath.length > 1
+        ? railPath
+        : distinctVehicles.length > 0
+          ? distinctVehicles.map((vehicle) => ({ lat: vehicle.latitude, lng: vehicle.longitude }))
+          : [{ lat: train.lat, lng: train.lon }];
+
+      // At the beginning of the route the backend clamps wagons with negative
+      // route distance to the first rail point. Extend the missing tail behind
+      // the final distinct vehicle so the train is full-length from frame one.
+      const rearVehicle = distinctVehicles.at(-1);
+      if (rearVehicle) {
+        const representedLength = Math.max(
+          0,
+          simulationTrain.distance_along_route_m - rearVehicle.distance_m
+        );
+        const missingLength = Math.max(0, simulationTrain.train_length_m - representedLength);
+        if (missingLength > 0.5) {
+          const heading = rearVehicle.heading_deg * (Math.PI / 180);
+          const tail = offsetLatLon(
+            rearVehicle.latitude,
+            rearVehicle.longitude,
+            -Math.sin(heading) * missingLength,
+            -Math.cos(heading) * missingLength
+          );
+          path.push({ lat: tail.lat, lng: tail.lon });
+        }
+      }
+      title = `Simulation train ${simulationTrain.train_id} · ${simulationTrain.status}`;
+    } else if (estimate?.map_state) {
+      const state = estimate.map_state;
+      const length = state.length_m ?? state.provisional_length_m ?? 0;
+      const heading = (state.direction_deg_from_east ?? 0) * (Math.PI / 180);
+      const rear = offsetLatLon(
+        state.latitude,
+        state.longitude,
+        -Math.cos(heading) * length,
+        -Math.sin(heading) * length
+      );
+      path = [{ lat: state.latitude, lng: state.longitude }, { lat: rear.lat, lng: rear.lon }];
+      title = `Simulated acoustic estimate ${estimate.train_id} · ${estimate.status}`;
+      color = "#7C3AED";
+      markerHeadingDeg = 90 - (state.direction_deg_from_east ?? 0);
+    } else if (train) {
+      const { front, rear } = trainEndpoints(train);
+      path = [{ lat: front.lat, lng: front.lon }, { lat: rear.lat, lng: rear.lon }];
+      title = `Simulated train ${train.trainId}`;
+      markerHeadingDeg = 90 - train.degFromEast;
+    }
+
+    if (path.length === 0) {
+      trainMarkerRef.current?.setMap?.(null);
+      trainBodyRef.current?.setMap?.(null);
+      trainMarkerRef.current = null;
+      trainBodyRef.current = null;
+      framedTrainRef.current = false;
+      return;
+    }
+
+    const front = path[0];
+    if (!trainMarkerRef.current) {
+      trainMarkerRef.current = new maps.Marker({ map });
+    }
+    trainMarkerRef.current.setOptions({
+      position: front,
+      title,
+      icon: {
+        url: trainIcon(color, markerHeadingDeg),
+        scaledSize: new maps.Size(34, 34),
+        anchor: new maps.Point(17, 17),
+      },
+      zIndex: 1000,
+    });
+
+    if (!trainBodyRef.current) {
+      trainBodyRef.current = new maps.Polyline({ map, geodesic: true });
+    }
+    trainBodyRef.current.setOptions({
+      path,
+      strokeColor: color,
+      strokeOpacity: 0.9,
+      strokeWeight: simulationTrain ? 12 : 6,
+      zIndex: 999,
+    });
+
+    if (!routePath && !framedTrainRef.current) {
+      map.setCenter(front);
+      map.setZoom(15);
+      framedTrainRef.current = true;
+    }
+  }, [train, estimate, simulationTrain, simulationRailRoute, routePath, isLoading]);
 
   return (
     <div className="relative h-full w-full bg-[#E8EEF4]">
@@ -363,7 +481,7 @@ export default function GoogleMap({
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#E8EEF4]/80 backdrop-blur-[1px]">
           <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 shadow-lg">
             <span
-              className="h-5 w-5 animate-spin rounded-full border-2 border-[#007AFF] border-t-transparent"
+              className="h-5 w-5 animate-spin rounded-full border-2 border-[#A65353] border-t-transparent"
               aria-hidden
             />
             <p className="text-sm font-medium text-[#0B1B33]">

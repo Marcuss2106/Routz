@@ -22,14 +22,40 @@ Mobile-friendly Next.js app that provides a polished **Google Maps driving-route
 - `lib/trains.ts` — `TrainObservation` type + `predictCrossingBlockages()` (straight-line constant-velocity model)
 - `lib/crossings.ts` — real FRA inventory crossings (Columbia, SC, with DOT IDs)
 - `lib/routeCrossing.ts` — route-vs-blockage conflict detection + candidate scoring
-- `lib/trainStream.ts` — live backend link: POST observations + SSE subscription
+- `lib/trainStream.ts` — live links to the railroad clock (port 8000) and acoustic/user API (port 8002)
 
-## Live backend (optional, recommended)
+## Live train simulation
+
+The Google Maps app connects directly to the railroad clock, keeps the train
+visible while it is paused, and updates its locomotive/wagon footprint as it
+moves. Crossing predictions are recomputed from the live position and heading;
+the already-fetched Google route alternatives are rescored as the train moves,
+so a crossing behind the train is preferred over a crossing it is approaching.
+
+Start the railroad clock before the frontend:
+
+```bash
+cd backend
+uv run backend
+```
+
+In another terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+The defaults are `http://localhost:8000` and `ws://localhost:8000/ws/simulation`.
+Override them with `NEXT_PUBLIC_SIMULATION_API_URL` and
+`NEXT_PUBLIC_SIMULATION_WS_URL` in `.env.local`, then restart Next.js.
+
+## Acoustic backend (optional)
 
 The `backend/` FastAPI service computes predictions server-side and pushes
 them over SSE, so every client stays in sync:
 
-The map falls back to the same local math when `NEXT_PUBLIC_ROUTZ_API_URL` is unset. The railroad process on port 8000 does not serve that prediction stream. The user voice API on port 8002 is a different service.
+The map falls back to the same local math when `NEXT_PUBLIC_ROUTZ_API_URL` is unset. The user voice API on port 8002 is separate from the railroad clock. When both are running, the exact railroad simulation state drives the displayed train and route scoring; acoustic estimates remain available as a fallback.
 
 ## Train observations (input contract)
 

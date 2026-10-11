@@ -29,8 +29,8 @@ class RailNetwork:
     """Endpoint-only topology; crossings are never joined unless SCDOT split them."""
 
     join_tolerance_m = 2.5
-    route_start_wgs = (-81.03289988338747, 33.98918866218069)
-    route_end_wgs = (-81.02246011939191, 33.99336818146877)
+    route_start_wgs = (-81.03356685254148, 33.98900940070297)
+    route_end_wgs = (-81.02215337406, 33.99365015767137)
 
     def __init__(self, path, coordinates: CoordinateSystem):
         self.coordinates = coordinates
@@ -285,10 +285,16 @@ class RailNetwork:
                 "id": "usc-engineering-demo-corridor",
                 "length_m": self.route_length_m,
                 "source_edge_ids": self.route_edges,
-                "selection": "Requested USC-area endpoints snapped to the nearest mutually connected SCDOT rails.",
+                "selection": "Requested endpoints snapped to the nearest mutually connected SCDOT rails.",
                 "requested_start": {"longitude": self.route_start_wgs[0], "latitude": self.route_start_wgs[1]},
                 "requested_end": {"longitude": self.route_end_wgs[0], "latitude": self.route_end_wgs[1]},
                 "points": [self.coordinates.utm_to_scene(*point) for point in self.route_points_utm],
+                "points_wgs84": [
+                    {"longitude": longitude, "latitude": latitude}
+                    for longitude, latitude in (
+                        self.coordinates.utm_to_wgs(*point) for point in self.route_points_utm
+                    )
+                ],
             },
             "landmarks": [
                 {

@@ -272,7 +272,7 @@ export default function RouteForm({
             Starting location
           </label>
           <span
-            className="pointer-events-none absolute left-4 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-[#007AFF]"
+            className="pointer-events-none absolute left-4 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-[#A65353]"
             aria-hidden
           />
           <input
@@ -284,7 +284,7 @@ export default function RouteForm({
             value={originQuery}
             onChange={(e) => handleQueryChange("origin", e.target.value)}
             onFocus={() => handleFocus("origin")}
-            className="h-[52px] w-full rounded-xl bg-[#F2F4F8] pl-10 pr-11 text-[16px] font-medium text-[#0B1B33] placeholder:font-normal placeholder:text-[#0B1B33]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+            className="h-[52px] w-full rounded-xl bg-[#F2F4F8] pl-10 pr-11 text-[16px] font-medium text-[#0B1B33] placeholder:font-normal placeholder:text-[#0B1B33]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#A65353]"
           />
           {originQuery && (
             <button
@@ -312,12 +312,12 @@ export default function RouteForm({
             type="button"
             onClick={onUseMyLocation}
             disabled={isLocating}
-            className="flex h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-[#EAF2FF] px-4 text-[15px] font-semibold text-[#007AFF] hover:bg-[#DCEAFF] active:bg-[#CDE0FF] disabled:opacity-60"
+            className="flex h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-[#F6EAEA] px-4 text-[15px] font-semibold text-[#A65353] hover:bg-[#F0DEDE] active:bg-[#E8D1D1] disabled:opacity-60"
           >
             {isLocating ? (
               <>
                 <span
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-[#007AFF] border-t-transparent"
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-[#A65353] border-t-transparent"
                   aria-hidden
                 />
                 Locating…
@@ -363,7 +363,7 @@ export default function RouteForm({
             value={destinationQuery}
             onChange={(e) => handleQueryChange("destination", e.target.value)}
             onFocus={() => handleFocus("destination")}
-            className="h-[52px] w-full rounded-xl bg-[#F2F4F8] pl-10 pr-11 text-[16px] font-medium text-[#0B1B33] placeholder:font-normal placeholder:text-[#0B1B33]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+            className="h-[52px] w-full rounded-xl bg-[#F2F4F8] pl-10 pr-11 text-[16px] font-medium text-[#0B1B33] placeholder:font-normal placeholder:text-[#0B1B33]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#A65353]"
           />
           {destinationQuery && (
             <button
@@ -383,7 +383,7 @@ export default function RouteForm({
             {searchingField === activeField ? (
               <div className="flex items-center gap-2.5 px-4 py-3.5">
                 <span
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-[#007AFF] border-t-transparent"
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-[#A65353] border-t-transparent"
                   aria-hidden
                 />
                 <p className="text-sm text-[#0B1B33]/60">Searching places…</p>
@@ -452,7 +452,7 @@ export default function RouteForm({
       <button
         type="submit"
         disabled={!canSubmit}
-        className="mt-3 flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#007AFF] text-[17px] font-semibold text-white shadow-[0_4px_14px_rgba(0,122,255,0.35)] hover:bg-[#0066D6] active:bg-[#0055B8] disabled:cursor-not-allowed disabled:bg-[#007AFF]/35 disabled:shadow-none"
+        className="mt-3 flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#A65353] text-[17px] font-semibold text-white shadow-[0_4px_14px_rgba(166,83,83,0.30)] hover:bg-[#934747] active:bg-[#7F3D3D] disabled:cursor-not-allowed disabled:bg-[#A65353]/35 disabled:shadow-none"
       >
         {isLoading ? (
           <>

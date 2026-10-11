@@ -50,7 +50,7 @@ State includes `train_id`, monotonic `sequence`, `simulation_time_s`, `status`, 
 
 Cached GeoJSON is WGS84 (`EPSG:4326`, `[longitude, latitude]`). Movement and clipping use UTM zone 17N (`EPSG:32617`) in meters. The shared origin is downtown Columbia at 34.0007, -81.0348. Three.js X is east, Y is up, and Z is south; `coordinates.py` makes this reversible.
 
-The graph joins only source feature endpoints within 2.5 m and never creates a node merely where lines cross visually. The live demo route snaps the requested USC-area start (33.98918866218069, -81.03289988338747) and end (33.99336818146877, -81.02246011939191) to the nearest mutually connected SCDOT rails. The API and renderer still include the entire clipped railroad network, while the offline generator continues to use the complete graph. Roads, the USC College of Engineering and Computing landmark, audio trackers, crossings, and rails use the same WGS84 → UTM 17N → Three.js conversion.
+The graph joins only source feature endpoints within 2.5 m and never creates a node merely where lines cross visually. The live demo route starts 100 m farther back along the connected rail at (33.98900940070297, -81.03356685254148) and ends near (33.99365015767137, -81.02215337406), with both requested points snapped to mutually connected SCDOT rails. The API and renderer still include the entire clipped railroad network, while the offline generator continues to use the complete graph. Roads, the USC College of Engineering and Computing landmark, audio trackers, crossings, and rails use the same WGS84 → UTM 17N → Three.js conversion.
 
 ### Data provenance
 

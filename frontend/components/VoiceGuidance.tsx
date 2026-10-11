@@ -146,7 +146,7 @@ export function VoiceButton() {
       onClick={toggle}
       className={`min-h-9 rounded-full px-3 py-1 text-[12px] font-semibold ${
         enabled
-          ? "bg-[#007AFF] text-white"
+          ? "bg-[#A65353] text-white"
           : "bg-[#F2F4F8] text-[#0B1B33]/70"
       }`}
     >

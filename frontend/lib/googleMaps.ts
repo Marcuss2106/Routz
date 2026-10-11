@@ -538,7 +538,8 @@ export async function getDrivingRoute(
 export async function getDrivingRoutes(
   origin: PlaceResult,
   destination: PlaceResult,
-  alternatives = true
+  alternatives = true,
+  intermediates: RoutzCoordinate[] = []
 ): Promise<RouteInfo[]> {
   const maps = await loadGoogleMaps();
 
@@ -576,6 +577,16 @@ export async function getDrivingRoutes(
     destination: to,
     travelMode,
     fields,
+    ...(intermediates.length > 0
+      ? {
+          intermediates: intermediates.map((point) => ({
+            location: typeof maps.LatLng === "function"
+              ? new maps.LatLng(point.latitude, point.longitude)
+              : { lat: point.latitude, lng: point.longitude },
+            via: true,
+          })),
+        }
+      : {}),
     // Ask for alternates when the caller wants crossing-aware choice.
     // Unknown keys are ignored by older library versions — harmless.
     ...(alternatives ? { computeAlternativeRoutes: true } : {}),

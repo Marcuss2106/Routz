@@ -7,7 +7,7 @@
  */
 
 import type { RouteInfo, RoutzCoordinate } from "./googleMaps";
-import { haversineM } from "./trains";
+import { deltaMeters, haversineM } from "./trains";
 import type { BlockagePrediction } from "./trains";
 
 export interface RouteConflict {
@@ -55,16 +55,33 @@ function closestApproach(
   if (path.length === 0) return { distanceM: Infinity, fraction: 0 };
   const cum = cumulativeDistances(path);
   const total = cum[cum.length - 1] || 1;
+  if (path.length === 1) {
+    return {
+      distanceM: haversineM(path[0].latitude, path[0].longitude, lat, lon),
+      fraction: 0,
+    };
+  }
+
   let best = Infinity;
-  let bestIdx = 0;
-  for (let i = 0; i < path.length; i++) {
-    const d = haversineM(path[i].latitude, path[i].longitude, lat, lon);
-    if (d < best) {
-      best = d;
-      bestIdx = i;
+  let bestAlongM = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const start = path[i];
+    const end = path[i + 1];
+    const segment = deltaMeters(start.latitude, start.longitude, end.latitude, end.longitude);
+    const crossing = deltaMeters(start.latitude, start.longitude, lat, lon);
+    const lengthSq = segment.east ** 2 + segment.north ** 2;
+    const t = lengthSq === 0
+      ? 0
+      : Math.max(0, Math.min(1, (crossing.east * segment.east + crossing.north * segment.north) / lengthSq));
+    const nearestEast = segment.east * t;
+    const nearestNorth = segment.north * t;
+    const distance = Math.hypot(crossing.east - nearestEast, crossing.north - nearestNorth);
+    if (distance < best) {
+      best = distance;
+      bestAlongM = cum[i] + Math.sqrt(lengthSq) * t;
     }
   }
-  return { distanceM: best, fraction: cum[bestIdx] / total };
+  return { distanceM: best, fraction: bestAlongM / total };
 }
 
 /**
@@ -74,14 +91,15 @@ function closestApproach(
  * @param predictions Active blockage predictions (sorted soonest-first).
  * @param departMs Driver departure time (ms epoch). Default now.
  * @param hitRadiusM Route passes within this of a crossing => it uses that crossing. Default 45m.
- * @param graceS Block window is expanded by this on both sides. Default 10s.
+ * @param graceS Block window is expanded by this on both sides. Default 180s,
+ * so a safer route is selected several minutes before the affected crossing.
  */
 export function findRouteConflicts(
   route: RouteInfo,
   predictions: BlockagePrediction[],
   departMs: number = Date.now(),
   hitRadiusM = 45,
-  graceS = 10
+  graceS = 180
 ): RouteConflict[] {
   const conflicts: RouteConflict[] = [];
   const durationMs = Math.max(0, route.expectedTravelTimeSeconds) * 1000;
@@ -140,6 +158,9 @@ export function scoreRouteCandidates(
   });
   scored.sort((a, b) => {
     if (a.blocked !== b.blocked) return a.blocked ? 1 : -1;
+    if (a.conflicts.length !== b.conflicts.length) {
+      return a.conflicts.length - b.conflicts.length;
+    }
     return a.effectiveSeconds - b.effectiveSeconds;
   });
   return scored;

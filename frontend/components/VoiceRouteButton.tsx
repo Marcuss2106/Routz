@@ -105,7 +105,7 @@ export default function VoiceRouteButton({
       className={`min-h-9 rounded-full px-3 py-1 text-[12px] font-semibold ${
         listening
           ? "bg-[#9A3412] text-white"
-          : "bg-[#EAF2FF] text-[#007AFF]"
+          : "bg-[#F6EAEA] text-[#A65353]"
       } disabled:opacity-60`}
     >
       {label}

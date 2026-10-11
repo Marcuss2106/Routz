@@ -35,6 +35,20 @@ export interface TrainObservation {
   positionReference: PositionReference;
 }
 
+export interface RailRoutePoint {
+  latitude: number;
+  longitude: number;
+}
+
+export interface RouteAwareTrainState {
+  train_id: string;
+  status: "running" | "paused" | "completed";
+  distance_along_route_m: number;
+  speed_mps: number;
+  playback_speed: number;
+  train_length_m: number;
+}
+
 export type BlockageStatus =
   | "blocked_now"
   | "blocked_soon"
@@ -292,6 +306,146 @@ export function predictCrossingBlockages(
   // Soonest first.
   out.sort((a, b) => a.etaSeconds - b.etaSeconds);
   return out;
+}
+
+/**
+ * Predict crossing occupancy along the simulator's actual curved rail route.
+ * This avoids the straight-line tangent approximation changing crossings when
+ * the locomotive turns through a curve or switch.
+ */
+export function predictRouteBlockages(
+  state: RouteAwareTrainState,
+  route: RailRoutePoint[],
+  crossings: Crossing[],
+  opts: PredictOptions = {}
+): BlockagePrediction[] {
+  if (route.length < 2) return [];
+  const {
+    corridorHalfWidthM = 80,
+    clearanceBufferS = 8,
+    soonThresholdS = 180,
+    horizonS = 15 * 60,
+    crossingHalfWidthM = 15,
+  } = opts;
+  const cumulative = [0];
+  for (let index = 1; index < route.length; index++) {
+    cumulative.push(
+      cumulative[index - 1] + haversineM(
+        route[index - 1].latitude,
+        route[index - 1].longitude,
+        route[index].latitude,
+        route[index].longitude
+      )
+    );
+  }
+
+  const observedMs = Date.now();
+  const observedAt = new Date(observedMs).toISOString();
+  const speedMps = state.status === "running"
+    ? state.speed_mps * state.playback_speed
+    : 0;
+  const stopped = speedMps < 0.5;
+  const predictions: BlockagePrediction[] = [];
+
+  for (const crossing of crossings) {
+    let lateralM = Infinity;
+    let crossingDistanceM = 0;
+    for (let index = 0; index < route.length - 1; index++) {
+      const start = route[index];
+      const end = route[index + 1];
+      const segment = deltaMeters(start.latitude, start.longitude, end.latitude, end.longitude);
+      const target = deltaMeters(
+        start.latitude,
+        start.longitude,
+        crossing.latitude,
+        crossing.longitude
+      );
+      const lengthSq = segment.east ** 2 + segment.north ** 2;
+      const fraction = lengthSq === 0 ? 0 : Math.max(0, Math.min(
+        1,
+        (target.east * segment.east + target.north * segment.north) / lengthSq
+      ));
+      const miss = Math.hypot(
+        target.east - segment.east * fraction,
+        target.north - segment.north * fraction
+      );
+      if (miss < lateralM) {
+        lateralM = miss;
+        crossingDistanceM = cumulative[index] + Math.sqrt(lengthSq) * fraction;
+      }
+    }
+    if (lateralM > corridorHalfWidthM) continue;
+
+    const frontDistanceM = crossingDistanceM - state.distance_along_route_m;
+    const rearClearDistanceM = frontDistanceM + state.train_length_m;
+    if (stopped) {
+      if (frontDistanceM > crossingHalfWidthM || rearClearDistanceM < -crossingHalfWidthM) continue;
+      predictions.push({
+        crossingId: crossing.id,
+        roadName: crossing.roadName,
+        latitude: crossing.latitude,
+        longitude: crossing.longitude,
+        blockStartUtc: observedAt,
+        blockEndUtc: new Date(observedMs + horizonS * 1000).toISOString(),
+        etaSeconds: 0,
+        clearSeconds: horizonS,
+        distanceM: Math.round(frontDistanceM),
+        lateralM: Math.round(lateralM),
+        status: "stopped_on_crossing",
+        trainId: state.train_id,
+        observedAt,
+      });
+      continue;
+    }
+
+    const etaSeconds = frontDistanceM / speedMps;
+    const clearSeconds = rearClearDistanceM / speedMps + clearanceBufferS;
+    if (rearClearDistanceM < -crossingHalfWidthM) {
+      if (rearClearDistanceM < -2000) continue;
+      predictions.push({
+        crossingId: crossing.id,
+        roadName: crossing.roadName,
+        latitude: crossing.latitude,
+        longitude: crossing.longitude,
+        blockStartUtc: new Date(observedMs + etaSeconds * 1000).toISOString(),
+        blockEndUtc: new Date(observedMs + clearSeconds * 1000).toISOString(),
+        etaSeconds: Math.round(etaSeconds),
+        clearSeconds: Math.round(clearSeconds),
+        distanceM: Math.round(frontDistanceM),
+        lateralM: Math.round(lateralM),
+        status: "cleared",
+        trainId: state.train_id,
+        observedAt,
+      });
+      continue;
+    }
+    if (etaSeconds > horizonS) continue;
+
+    const overlaps = frontDistanceM <= crossingHalfWidthM && rearClearDistanceM >= -crossingHalfWidthM;
+    const status: BlockageStatus = overlaps
+      ? "blocked_now"
+      : etaSeconds > 0 && etaSeconds <= soonThresholdS
+        ? "blocked_soon"
+        : "upcoming";
+    predictions.push({
+      crossingId: crossing.id,
+      roadName: crossing.roadName,
+      latitude: crossing.latitude,
+      longitude: crossing.longitude,
+      blockStartUtc: new Date(observedMs + Math.max(0, etaSeconds) * 1000).toISOString(),
+      blockEndUtc: new Date(observedMs + Math.max(0, clearSeconds) * 1000).toISOString(),
+      etaSeconds: Math.round(etaSeconds),
+      clearSeconds: Math.round(clearSeconds),
+      distanceM: Math.round(frontDistanceM),
+      lateralM: Math.round(lateralM),
+      status,
+      trainId: state.train_id,
+      observedAt,
+    });
+  }
+
+  predictions.sort((a, b) => a.etaSeconds - b.etaSeconds);
+  return predictions;
 }
 
 /** Front + rear lat/lon of the train at observation time (for map display). */
