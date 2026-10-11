@@ -22,7 +22,11 @@ import {
 import { readCurrentLocation } from "@/lib/here";
 import { SIMULATED_CROSSINGS, type Crossing } from "@/lib/crossings";
 import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/lib/routeCrossing";
-import { getCrossingAwareCandidates } from "@/lib/routeDetour";
+import {
+  blockedCrossingSignature,
+  getCrossingAwareCandidates,
+  routeAvoidsActiveBlockages,
+} from "@/lib/routeDetour";
 import {
   predictCrossingBlockages,
   predictRouteBlockages,
@@ -298,47 +302,62 @@ function MapScreen() {
 
   useEffect(() => {
     if (!route || candidates.length === 0) return;
-    const scored = scoreRouteCandidates(candidates, predictions);
+    const nowMs = Date.now();
+    const scored = scoreRouteCandidates(candidates, predictions, nowMs);
     const best = scored[0];
     if (!best) return;
-    if (best.route !== route) {
-      const current = scored.find((candidate) => candidate.route === route);
-      const trainStillActive = predictions.some(
-        (prediction) =>
-          prediction.status !== "cleared" && prediction.status !== "unknown"
-      );
-      if (wasRerouted && trainStillActive && current && !current.blocked) {
-        // Once a clear detour is selected, do not oscillate back to the
-        // nominal fastest route on a transient 10 Hz prediction update.
-        // Release the detour only after the active train risk disappears, or
-        // if the detour itself becomes blocked.
-        return;
-      }
-      const trainIsStationary = Boolean(
-        simulationTrainStatus && simulationTrainStatus !== "running"
-      );
-      if (
-        trainIsStationary &&
-        current &&
-        best.conflicts.length >= current.conflicts.length
-      ) {
-        return;
-      }
-      if (
-        !current ||
-        best.blocked !== current.blocked ||
-        best.conflicts.length < current.conflicts.length ||
-        best.effectiveSeconds < current.effectiveSeconds
-      ) {
-        // Live simulation/acoustic updates can promote an already-fetched
-        // route whose crossing is behind the train instead of one ahead of it.
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setRoute(best.route);
-        const fastest = [...candidates].sort(
-          (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
-        )[0];
-        setWasRerouted(best.route !== fastest);
-      }
+    if (best.route === route) return;
+
+    const current = scored.find((candidate) => candidate.route === route);
+    const trainStillActive = predictions.some(
+      (prediction) =>
+        prediction.status !== "cleared" && prediction.status !== "unknown"
+    );
+    if (wasRerouted && trainStillActive && current && !current.blocked) {
+      // Hold a verified clear detour until the train risk clears or the
+      // detour itself becomes blocked.
+      return;
+    }
+
+    // Same blocked crossings + longer ETA = "just slower", not a reroute.
+    const currentSignature = blockedCrossingSignature(route, predictions, nowMs);
+    const bestSignature = blockedCrossingSignature(best.route, predictions, nowMs);
+    if (
+      currentSignature !== "clear" &&
+      bestSignature === currentSignature &&
+      best.route.expectedTravelTimeSeconds >= route.expectedTravelTimeSeconds
+    ) {
+      return;
+    }
+
+    const trainIsStationary = Boolean(
+      simulationTrainStatus && simulationTrainStatus !== "running"
+    );
+    if (
+      trainIsStationary &&
+      current &&
+      best.conflicts.length >= current.conflicts.length
+    ) {
+      return;
+    }
+
+    const improvesAvoidance =
+      Boolean(current?.blocked) && !best.blocked;
+    const fewerConflicts =
+      current != null && best.conflicts.length < current.conflicts.length;
+    const fasterWhileClear =
+      !best.blocked &&
+      !current?.blocked &&
+      best.effectiveSeconds + 15 < (current?.effectiveSeconds ?? Infinity);
+
+    if (improvesAvoidance || fewerConflicts || fasterWhileClear || !current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRoute(best.route);
+      setConflicts(best.conflicts);
+      const fastest = [...candidates].sort(
+        (a, b) => a.expectedTravelTimeSeconds - b.expectedTravelTimeSeconds
+      )[0];
+      setWasRerouted(!best.blocked && best.route !== fastest);
     }
   }, [predictions, route, candidates, simulationTrainStatus, wasRerouted]);
 
@@ -398,12 +417,27 @@ function MapScreen() {
             routeRefreshRef.current.requestId !== requestId ||
             activeRouteRequestRef.current !== activeRequestId
           ) return;
-          const scored = scoreRouteCandidates(results, latestPredictionsRef.current);
-          const best = scored.find((candidate) => !candidate.blocked);
+          const nowMs = Date.now();
+          const latest = latestPredictionsRef.current;
+          const scored = scoreRouteCandidates(results, latest, nowMs);
+          const best = scored.find((candidate) =>
+            routeAvoidsActiveBlockages(candidate.route, latest, nowMs)
+          );
           if (!best) {
-            // Google can return several alternatives that all cross the same
-            // train. Keep the current route instead of briefly drawing one of
-            // those blocked alternatives and switching back on the next tick.
+            // Every candidate still meets the train (often the same crossings
+            // with a longer ETA). Keep the drawn route stable — no flicker.
+            setCandidates(results);
+            return;
+          }
+          const active = latestRouteRef.current;
+          if (
+            active &&
+            routeAvoidsActiveBlockages(active, latest, nowMs) &&
+            blockedCrossingSignature(active, latest, nowMs) === "clear" &&
+            best.route.expectedTravelTimeSeconds + 15 >=
+              active.expectedTravelTimeSeconds
+          ) {
+            // Already on a clear route; do not redraw for a slower clear option.
             setCandidates(results);
             return;
           }

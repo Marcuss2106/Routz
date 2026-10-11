@@ -140,6 +140,23 @@ export function SimulationControls({ socketRef }: { socketRef: MutableRefObject<
           <span>Train audio</span>
           <input aria-label="Train audio volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
         </label>
+        <label className="speed-control">
+          <span>Length</span>
+          <select
+            aria-label="Train length"
+            value={current?.train_length_m ?? 210}
+            onChange={(event) => {
+              void socketRef.current?.sendWithFallback({
+                command: "set_train_length",
+                value: Number(event.target.value),
+              });
+            }}
+          >
+            {[100, 210, 400, 800, 1200].map((meters) => (
+              <option key={meters} value={meters}>{meters} m</option>
+            ))}
+          </select>
+        </label>
         <label className="speed-control"><span>Playback speed</span><select value={current?.playback_speed ?? 1} onChange={(event) => { void socketRef.current?.sendWithFallback({ command: "set_playback_speed", value: Number(event.target.value) }); }}>{[0.5, 1, 2, 4, 8].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}</select></label>
       </div>
     </section>

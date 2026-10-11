@@ -7,19 +7,36 @@ from .rail_network import RailNetwork
 class TrainSimulation:
     train_id = "train-columbia-001"
     route_id = "usc-engineering-demo-corridor"
-    vehicle_offsets_m = [0.0, 44.0, 80.0, 116.0, 152.0, 188.0]
-    train_length_m = 210.0
+    # Six-consist template for a 210 m demo train; scaled with set_train_length.
+    _BASE_VEHICLE_OFFSETS_M = (0.0, 44.0, 80.0, 116.0, 152.0, 188.0)
+    _BASE_TRAIN_LENGTH_M = 210.0
+    MIN_TRAIN_LENGTH_M = 50.0
+    MAX_TRAIN_LENGTH_M = 2000.0
 
     def __init__(self, network: RailNetwork, speed_mps: float):
         self.network = network
         self.base_speed_mps = speed_mps
         self.playback_speed = 1.0
+        self.train_length_m = self._BASE_TRAIN_LENGTH_M
+        self.vehicle_offsets_m = list(self._BASE_VEHICLE_OFFSETS_M)
         self.distance_m = self.network.route_start_distance_m
         self.simulation_time_s = 0.0
         self.sequence = 0
         self.status = "paused"
         self._last_tick = time.monotonic()
         self._lock = asyncio.Lock()
+
+    def _set_train_length(self, length_m: float) -> None:
+        if not self.MIN_TRAIN_LENGTH_M <= length_m <= self.MAX_TRAIN_LENGTH_M:
+            raise ValueError(
+                f"train length must be between {self.MIN_TRAIN_LENGTH_M:g} and "
+                f"{self.MAX_TRAIN_LENGTH_M:g} metres"
+            )
+        scale = length_m / self._BASE_TRAIN_LENGTH_M
+        self.train_length_m = length_m
+        self.vehicle_offsets_m = [
+            offset * scale for offset in self._BASE_VEHICLE_OFFSETS_M
+        ]
 
     async def tick(self) -> None:
         async with self._lock:
@@ -53,6 +70,8 @@ class TrainSimulation:
                 if not 0.25 <= value <= 8.0:
                     raise ValueError("playback speed must be between 0.25 and 8")
                 self.playback_speed = value
+            elif command == "set_train_length":
+                self._set_train_length(float(message.get("value", self.train_length_m)))
             else:
                 raise ValueError(f"unsupported command: {command}")
             self._last_tick = time.monotonic()

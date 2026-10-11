@@ -29,6 +29,16 @@ def test_command_post_rejects_unknown_commands() -> None:
     assert response.status_code == 400
 
 
+def test_command_post_sets_train_length() -> None:
+    client = TestClient(app)
+    response = client.post("/api/command", json={"command": "set_train_length", "value": 800})
+    assert response.status_code == 200
+    assert response.json()["train_length_m"] == 800.0
+
+    rejected = client.post("/api/command", json={"command": "set_train_length", "value": 10})
+    assert rejected.status_code == 400
+
+
 def test_public_rail_api_does_not_emit_credentialed_cors() -> None:
     client = TestClient(app)
     response = client.get(

@@ -118,7 +118,8 @@ export type ConnectionState = "connecting" | "connected" | "reconnecting" | "off
 export type CameraMode = "overview" | "top" | "follow";
 export type SimulationCommand =
   | { command: "play" | "pause" | "restart" }
-  | { command: "set_playback_speed"; value: number };
+  | { command: "set_playback_speed"; value: number }
+  | { command: "set_train_length"; value: number };
 
 export type SensorId = "mic-1" | "mic-2" | "mic-3";
 

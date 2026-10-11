@@ -63,7 +63,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .camera-button { height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: rgba(65,75,66,.08); font-size: 10px; font-weight: 700; }
 .camera-button.active { color: #8f382e; background: rgba(169,67,52,.14); box-shadow: inset 0 0 0 1px rgba(169,67,52,.12); }
 .text-button { height: 38px; padding: 0 10px; background: transparent; font-size: 11px; }
-.control-settings { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 18px; margin-top: 10px; padding: 9px 3px 0; border-top: 1px solid rgba(49,58,53,.08); }
+.control-settings { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; margin-top: 10px; padding: 9px 3px 0; border-top: 1px solid rgba(49,58,53,.08); }
 .volume-control { display: flex; align-items: center; gap: 7px; min-width: 245px; font-size: 10px; color: rgba(38,48,45,.62); white-space: nowrap; }
 .volume-control input { width: 140px; height: 4px; margin-left: 3px; appearance: none; border-radius: 4px; background: rgba(65,75,66,.16); cursor: pointer; }
 .volume-control input::-webkit-slider-thumb { width: 14px; height: 14px; appearance: none; border: 2px solid #f0eee4; border-radius: 50%; background: #a94334; box-shadow: 0 1px 5px rgba(74,47,40,.25); }
@@ -81,7 +81,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .train-readout { grid-template-columns: 42px 1fr; }
   .button-row { flex-wrap: wrap; }
   .speed-control { margin-left: 0; }
-  .control-settings { grid-template-columns: 1fr auto; gap: 10px; }
+  .control-settings { grid-template-columns: 1fr auto auto; gap: 10px; }
   .volume-control { min-width: 0; flex: 1; }
   .volume-control input { width: 100%; }
 }

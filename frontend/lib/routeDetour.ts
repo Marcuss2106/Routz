@@ -10,7 +10,7 @@ import {
   type RoutzCoordinate,
 } from "./googleMaps";
 import { FRA_CROSSINGS } from "./crossings";
-import { scoreRouteCandidates } from "./routeCrossing";
+import { findRouteConflicts, scoreRouteCandidates } from "./routeCrossing";
 import type { BlockagePrediction } from "./trains";
 
 export interface DetourBypass {
@@ -19,27 +19,66 @@ export interface DetourBypass {
 }
 
 /**
- * Grade-separated Columbia corridors that cross or bypass the downtown rail
- * corridor without using the nearby at-grade crossing.
+ * Waypoints west of the downtown Norfolk Southern at-grade corridor.
+ *
+ * Earlier hard-coded points sat on Gervais/Elmwood *at* the rail (~-81.02),
+ * so Google's forced routes still crossed Hampton/Taylor and scored as
+ * blocked — the map flickered between slower blocked alternatives. These
+ * points are drawn from OSM elevated/west arterials that keep the path off
+ * the FRA downtown inventory crossings.
  */
 export const COLUMBIA_BYPASS_WAYPOINTS: DetourBypass[] = [
   {
-    name: "Gervais Street central bypass",
-    coordinate: { latitude: 34.0018, longitude: -81.0205 },
+    name: "Gervais Street rail overpass (west)",
+    coordinate: { latitude: 33.99869, longitude: -81.04167 },
   },
   {
-    name: "Elmwood Avenue north bypass",
-    coordinate: { latitude: 34.0178, longitude: -81.0265 },
+    name: "Huger Street west arterial",
+    coordinate: { latitude: 34.0050, longitude: -81.0435 },
   },
   {
-    name: "Blossom Street south bypass",
-    coordinate: { latitude: 33.9935, longitude: -81.0230 },
+    name: "Elmwood Avenue west of corridor",
+    coordinate: { latitude: 34.0120, longitude: -81.0436 },
   },
   {
-    name: "Huger Street west bypass",
-    coordinate: { latitude: 34.0050, longitude: -81.0440 },
+    name: "Blossom Street rail overpass (west)",
+    coordinate: { latitude: 33.99021, longitude: -81.0393 },
   },
 ];
+
+/** Active (not cleared/unknown) blockage predictions. */
+export function activeBlockages(
+  predictions: BlockagePrediction[]
+): BlockagePrediction[] {
+  return predictions.filter(
+    (prediction) =>
+      prediction.status !== "cleared" && prediction.status !== "unknown"
+  );
+}
+
+/** True when the route does not meet any active train blockage. */
+export function routeAvoidsActiveBlockages(
+  route: RouteInfo,
+  predictions: BlockagePrediction[],
+  nowMs: number = Date.now()
+): boolean {
+  return findRouteConflicts(route, activeBlockages(predictions), nowMs).length === 0;
+}
+
+/**
+ * Crossing ids the route would meet while the train is active.
+ * Used to tell "same blocked corridor, just slower" from a real bypass.
+ */
+export function blockedCrossingSignature(
+  route: RouteInfo,
+  predictions: BlockagePrediction[],
+  nowMs: number = Date.now()
+): string {
+  const ids = findRouteConflicts(route, activeBlockages(predictions), nowMs)
+    .map((conflict) => conflict.crossingId)
+    .sort();
+  return ids.length > 0 ? ids.join("|") : "clear";
+}
 
 /** Candidate waypoints, ordered for the trip's general north/south direction. */
 export function findDetourWaypoints(
@@ -71,24 +110,24 @@ export function findDetourWaypoints(
   const bypasses = northbound
     ? COLUMBIA_BYPASS_WAYPOINTS
     : [
-        COLUMBIA_BYPASS_WAYPOINTS[0],
-        COLUMBIA_BYPASS_WAYPOINTS[2],
-        COLUMBIA_BYPASS_WAYPOINTS[1],
         COLUMBIA_BYPASS_WAYPOINTS[3],
+        COLUMBIA_BYPASS_WAYPOINTS[0],
+        COLUMBIA_BYPASS_WAYPOINTS[1],
+        COLUMBIA_BYPASS_WAYPOINTS[2],
       ];
   bypasses.forEach((bypass) => add(bypass.coordinate));
 
-  // Finally try real FRA crossings outside the active blockage set.
+  // Finally try real FRA crossings outside the active blockage set, but only
+  // ones that sit west of the blocked corridor so Google cannot snap back onto
+  // Hampton/Taylor.
   const blockedIds = new Set(
-    predictions
-      .filter(
-        (prediction) =>
-          prediction.status !== "cleared" && prediction.status !== "unknown"
-      )
-      .map((prediction) => prediction.crossingId)
+    activeBlockages(predictions).map((prediction) => prediction.crossingId)
   );
+  const blockedLons = activeBlockages(predictions).map((p) => p.longitude);
+  const eastEdge = blockedLons.length > 0 ? Math.max(...blockedLons) : -81.02;
   FRA_CROSSINGS
     .filter((crossing) => !blockedIds.has(crossing.id))
+    .filter((crossing) => crossing.longitude < eastEdge - 0.005)
     .forEach((crossing) => add({
       latitude: crossing.latitude,
       longitude: crossing.longitude,
@@ -98,8 +137,34 @@ export function findDetourWaypoints(
 }
 
 /**
+ * Keep unique geometric candidates: drop routes that hit the same active
+ * crossings as an earlier (usually faster) option. That is the "just slower"
+ * case the map was flickering through.
+ */
+export function dedupeByBlockageSignature(
+  routes: RouteInfo[],
+  predictions: BlockagePrediction[],
+  nowMs: number = Date.now()
+): RouteInfo[] {
+  const seen = new Set<string>();
+  const unique: RouteInfo[] = [];
+  for (const route of routes) {
+    const signature = blockedCrossingSignature(route, predictions, nowMs);
+    // Always keep one clear route; keep only the first blocked signature.
+    const key = signature === "clear"
+      ? `clear:${Math.round(route.expectedTravelTimeSeconds)}:${Math.round(route.distanceMeters)}`
+      : signature;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(route);
+  }
+  return unique;
+}
+
+/**
  * Return ordinary alternatives plus forced bypass routes when every ordinary
- * route conflicts with the train.
+ * route conflicts with the train. Only keep detours that actually clear the
+ * active blockage set.
  */
 export async function getCrossingAwareCandidates(
   origin: PlaceResult,
@@ -118,14 +183,14 @@ export async function getCrossingAwareCandidates(
     predictions.length === 0 ||
     !scoreRouteCandidates(direct, predictions, nowMs)[0]?.blocked
   ) {
-    return direct;
+    return dedupeByBlockageSignature(direct, predictions, nowMs);
   }
 
   const attempts = findDetourWaypoints(
     origin,
     destination,
     predictions
-  ).slice(0, 3);
+  ).slice(0, 4);
   const detours = await Promise.all(
     attempts.map(async (waypoint) => {
       try {
@@ -135,5 +200,16 @@ export async function getCrossingAwareCandidates(
       }
     })
   );
-  return [...direct, ...detours.flat()];
+
+  // Prefer detours that truly avoid the active blockages; fall back to the
+  // full pool only so the caller can still show "all options blocked".
+  const pooled = [...direct, ...detours.flat()];
+  const clear = pooled.filter((route) =>
+    routeAvoidsActiveBlockages(route, predictions, nowMs)
+  );
+  return dedupeByBlockageSignature(
+    clear.length > 0 ? clear : pooled,
+    predictions,
+    nowMs
+  );
 }

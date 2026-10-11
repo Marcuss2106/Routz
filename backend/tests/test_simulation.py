@@ -1,6 +1,7 @@
 import asyncio
 import math
 
+import pytest
 from shapely.geometry import LineString, Point
 
 from backend.config import settings
@@ -93,5 +94,9 @@ def test_play_pause_restart_and_completion():
         assert restarted["distance_along_route_m"] == network.route_start_distance_m
         assert restarted["simulation_time_s"] == 0
         assert all(vehicle["distance_m"] >= 0 for vehicle in restarted["vehicles"])
+        await simulation.command({"command": "set_train_length", "value": 420})
+        lengthened = await simulation.snapshot()
+        assert lengthened["train_length_m"] == 420.0
+        assert simulation.vehicle_offsets_m[-1] == pytest.approx(376.0, abs=0.1)
 
     asyncio.run(scenario())
