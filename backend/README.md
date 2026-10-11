@@ -60,3 +60,27 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 ```
 
 Tests cover coordinate round trips, connected route continuity, shared road/crossing alignment, whole-train placement, and play/pause/restart behavior.
+
+### Offline dataset generation
+
+The dataset generator is a separate headless command. It uses the complete railroad graph, runs faster than real time, and does not start FastAPI, render Three.js, or publish WebSocket messages.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m backend.dataset_generator \
+  --runs 25 \
+  --duration 300 \
+  --sampling-rate 10 \
+  --seed 20261010 \
+  --batch-size 50000 \
+  --prediction-horizons 5,15,30 \
+  --measurement-noise-m 3 \
+  --output-dir datasets/columbia-v1
+```
+
+Read selected columns and reconstruct one complete run without loading a model:
+
+```bash
+PYTHONPATH=src .venv/bin/python read_dataset.py datasets/columbia-v1 --batch-size 8
+```
+
+See [`DATASET_GUIDE.md`](DATASET_GUIDE.md) for schemas, leakage boundaries, replay reconstruction, assumptions, and the complete file layout.
