@@ -13,7 +13,6 @@ import {
 } from "@/components/VoiceGuidance";
 import VoiceRouteButton from "@/components/VoiceRouteButton";
 import {
-  getDrivingRoutes,
   getGoogleMapsApiKey,
   resolveSpokenPlace,
   reverseGeocode,
@@ -23,10 +22,10 @@ import {
 import { readCurrentLocation } from "@/lib/here";
 import { SIMULATED_CROSSINGS, type Crossing } from "@/lib/crossings";
 import { findRouteConflicts, scoreRouteCandidates, type RouteConflict } from "@/lib/routeCrossing";
+import { getCrossingAwareCandidates } from "@/lib/routeDetour";
 import {
   predictCrossingBlockages,
   predictRouteBlockages,
-  type BlockagePrediction,
   type RailRoutePoint,
 } from "@/lib/trains";
 import {
@@ -52,37 +51,6 @@ function simulatedHere(): PlaceResult {
     formattedAddress: "Simulated start, 301 Main St, Columbia, SC",
     coordinate: { latitude: 33.98924, longitude: -81.02982 },
   };
-}
-
-/**
- * Ask Google for ordinary alternatives first. If every option still meets an
- * active train conflict, force one additional candidate through the nearest
- * crossing that the rear of the train has already cleared.
- */
-async function getCrossingAwareCandidates(
-  origin: PlaceResult,
-  destination: PlaceResult,
-  predictions: BlockagePrediction[]
-): Promise<RouteInfo[]> {
-  const direct = await getDrivingRoutes(origin, destination, true);
-  if (predictions.length === 0 || !scoreRouteCandidates(direct, predictions)[0]?.blocked) {
-    return direct;
-  }
-
-  const cleared = predictions
-    .filter((prediction) => prediction.status === "cleared")
-    .sort((a, b) => b.distanceM - a.distanceM)[0];
-  if (!cleared) return direct;
-
-  try {
-    const viaClearedCrossing = await getDrivingRoutes(origin, destination, false, [{
-      latitude: cleared.latitude,
-      longitude: cleared.longitude,
-    }]);
-    return [...direct, ...viaClearedCrossing];
-  } catch {
-    return direct;
-  }
 }
 
 export default function Home() {
